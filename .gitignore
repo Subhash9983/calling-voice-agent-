@@ -1,0 +1,58 @@
+# --- Secrets (real secrets live outside the repo and OneDrive; see docs/12) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.env
+
+# --- Python / uv ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- Node / frontend ---
+node_modules
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+.vite/
+
+# --- Playwright ---
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# --- Logs and local tooling ---
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/settings.local.json
+.claude/worktrees/
+
+# --- R&D outputs: only sanitized evidence reports are tracked (docs/14 §20) ---
+outputs/*
+!outputs/README.md
+!outputs/evidence/
+outputs/evidence/**
+!outputs/evidence/**/
+!outputs/evidence/**/*.md
+
+# --- Pre-implementation research material (not part of the application) ---
+.review/
+build_voice_api_matrix.mjs
+edit_voice_api_costs.mjs
