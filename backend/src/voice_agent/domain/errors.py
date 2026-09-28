@@ -15,3 +15,11 @@ class InvalidTransitionError(DomainRuleError):
         self.entity = entity
         self.from_state = from_state
         self.to_state = to_state
+
+
+class IdempotencyConflictError(DomainRuleError):
+    """A client request/submission ID was reused with different semantics (docs/04 §6)."""
+
+
+class LifecycleStateError(DomainRuleError):
+    """The entity exists but its lifecycle state prohibits the operation (docs/04 §19)."""

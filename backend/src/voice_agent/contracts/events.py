@@ -155,6 +155,16 @@ class EventCategory(StrEnum):
     CONSENT = "consent"
 
 
+class EventSeverity(StrEnum):
+    """Durable ``session_events.severity`` values (docs/02 §9)."""
+
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
 class EventVisibility(StrEnum):
     INTERNAL = "internal"
     BROWSER_SAFE = "browser_safe"

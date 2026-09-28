@@ -24,6 +24,9 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
+    # WP4: control-API tests use httpx.ASGITransport directly; pinned to the
+    # version already resolved transitively in uv.lock (docs/13 §12).
+    "httpx==0.28.1",
     "ruff==0.16.9",
     "mypy==2.3.1",
 ]

@@ -44,6 +44,8 @@ class ConfigReason(StrEnum):
     CREDENTIAL_REF_NOT_ALLOWED = "credential_ref_not_allowed"
     CONNECTION_URL_MISSING = "connection_url_missing"
     PERSISTENCE_MODE_NOT_ALLOWED = "persistence_mode_not_allowed"
+    # A configured dependency has no usable implementation or is unreachable.
+    DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     AGENT_CONFIG_NOT_CONFIGURED = "agent_config_not_configured"
     AGENT_CONFIG_NOT_FOUND = "agent_config_not_found"
     AGENT_CONFIG_INVALID = "agent_config_invalid"

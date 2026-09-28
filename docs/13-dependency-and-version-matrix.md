@@ -231,6 +231,7 @@ Approved backend candidates:
 | `pytest-cov` | Latest stable compatible version, then exact lock |
 | `ruff` | Latest stable compatible version, then exact lock |
 | `mypy` | Latest stable compatible version, then exact lock |
+| `httpx` | `0.28.1` (WP4: direct dev dependency for control-API tests via `httpx.ASGITransport`; same version already resolved transitively, so the lock resolution is unchanged) |
 
 Approved frontend candidates:
 
