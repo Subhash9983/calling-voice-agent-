@@ -1,11 +1,11 @@
 # Voice Agent Master Plan
 
 Status: Approved for Phase 0 R&D  
-Authority: Decisions 001–067  
+Authority: Decisions 001–068  
 Scope: Local single-user browser voice-agent baseline and its approved R&D evidence contracts  
 Depends on: None  
 Implementation status: Not started  
-Last reviewed: 2026-09-26
+Last reviewed: 2026-09-28
 
 Current milestone: Browser voice sandbox  
 Knowledge base integration: Later milestone  
@@ -1581,7 +1581,7 @@ Decision:
 
 - use CPython 3.12.14 with uv 0.12.18 and Node.js 24.21.0 LTS with bundled npm 11.19.0; install CPython 3.12.14 through uv-managed builds because python.org publishes no Windows installer for security-only releases;
 - manage Python through `pyproject.toml`, `.python-version`, and a committed `uv.lock`, and frontend packages through exact `package.json` versions, `.nvmrc`, and committed `package-lock.json`;
-- select the initial backend direct pins FastAPI 0.141.1, Uvicorn 0.53.0, Pydantic 2.13.5, Pydantic Settings 2.15.0, PyMongo 4.18.1, LiveKit Agents 1.8.3, LiveKit API 1.2.1, OpenAI 3.19.2, Deepgram SDK 7.10.0, and SarvamAI 0.1.34;
+- select the initial backend direct pins FastAPI 0.141.1, Uvicorn 0.53.0, Pydantic 2.13.5, Pydantic Settings 2.15.0, PyMongo 4.18.1, LiveKit Agents 1.8.3, LiveKit API 1.2.1, OpenAI 3.19.2 (amended to 2.54.0 by Decision 068), Deepgram SDK 7.10.0, and SarvamAI 0.1.34;
 - use base LiveKit packages for control-plane/worker transport, except the `livekit-agents[silero]` extra approved by Decision 042, while keeping OpenAI, Deepgram, and Sarvam official SDKs inside this project's replaceable provider adapters;
 - use the OpenAI Python SDK with the Responses API and HTTP SSE streaming, not the OpenAI Agents SDK or Realtime speech-to-speech;
 - use official Deepgram SDK v7 for baseline streaming STT and official stable Sarvam SDK async streaming for baseline TTS;
@@ -2142,3 +2142,22 @@ Reason:
 The round-3 review found fencing gaps that could let a late worker or crashed reconciler produce duplicate audio or lose an end request, plus inconsistent event, turn-state, latency, cost, environment, and enum definitions across documents. These corrections give each rule one owner and one canonical wording.
 
 Detailed design: `docs/01-system-contracts.md` (S7, S8, S9, S15), `docs/02-database-design.md` (S1, S3, S7, S8, S14, S15), `docs/03-backend-module-design.md` (S1, S3, S11), `docs/04-control-api-contract.md` (S3, S14, S15), `docs/05-agent-worker-orchestration.md` (S1–S6, S8–S11), `docs/06-livekit-transport-adapter.md` (S4, S5, S6, S9, S10), `docs/07-stt-adapter-and-baseline.md` (S10, S11), `docs/08-conversation-adapter-and-llm-baseline.md` (S8, S9), `docs/09-tts-adapter-and-voice-baseline.md` (S9), `docs/11-phase0-evaluation-plan.md` (S11, S12), `docs/12-configuration-and-secrets.md` (S14), `docs/14-phase0-implementation-execution-plan.md` (S16), `docs/15-phase0-pricing-and-cost-model.md` (S13), `docs/16-evaluation-database-schema.md` (S14), and `docs/17-phase0-evaluation-case-catalog.md` (S12).
+
+### Decision 068: WP1 lock-resolution corrections
+
+Status: Approved (user, 2026-09-28)
+
+Decision:
+
+- pin `openai==2.54.0` instead of `3.19.2`: every `livekit-agents` 1.8.x release requires `openai>=2.50,<3` as a base dependency, so the approved pair was unsatisfiable. 2.54.0 is the latest stable 2.x; GPT-6 Luna Responses streaming, usage, and cancellation on this version are verified in WP8 before the adapter is accepted;
+- spell the MongoDB driver pin `pymongo==4.18.1`: the `srv` extra no longer exists and `dnspython` is a base dependency, so SRV resolution is unchanged;
+- accept the transitive `opentelemetry-semantic-conventions` prerelease-format version frozen in `uv.lock` as a documented exception to the no-prerelease rule, because upstream publishes only `bN` versions and it enters only through `livekit-agents`.
+- accept the transitive frontend package `gensync@1.0.0-beta.2` frozen in `package-lock.json` on the same basis: it enters only through the Babel toolchain of `@vitejs/plugin-react` and upstream has never published a non-prerelease version;
+- accept `uv_build==0.12.18` as the backend build backend: it only makes the project's own `src/voice_agent` layout installable and matches the approved uv version;
+- record `sarvamai==0.1.34` declaring no licence (PyPI metadata, package dist-info, and GitHub repository) as an open risk: the pin stays, and the licence terms must be confirmed with Sarvam before WP9 enables the TTS adapter.
+
+Reason:
+
+The WP1 compatibility gate (`docs/14` §7) found the approved direct pins unresolvable as written. The changes are the minimal evidence-backed corrections; no provider, model, or other direct pin changes.
+
+Detailed design: `docs/13-dependency-and-version-matrix.md` §3, §4, §9. Evidence: `outputs/evidence/wp01-scaffold/`.

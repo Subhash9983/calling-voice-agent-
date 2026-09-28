@@ -1,11 +1,11 @@
 # Dependency and Version Matrix
 
 Status: Approved for Phase 0 R&D compatibility validation  
-Authority: Decision 037 with Decisions 042, 043, 055, and 067 amendments  
+Authority: Decision 037 with Decisions 042, 043, 055, 067, and 068 amendments  
 Scope: Direct dependency pins, compatibility gates, and package ownership  
 Depends on: `00-voice-agent-master-plan.md`, `03-backend-module-design.md`, `07-stt-adapter-and-baseline.md`, `08-conversation-adapter-and-llm-baseline.md`, `09-tts-adapter-and-voice-baseline.md`, `12-configuration-and-secrets.md`  
 Implementation status: Not started  
-Last reviewed: 2026-09-26
+Last reviewed: 2026-09-28
 
 Research date: 2026-09-26  
 Python package manager: uv  
@@ -54,10 +54,10 @@ The runtime/tool versions are recorded in `.python-version`, Node version metada
 | `uvicorn[standard]` | `0.53.0` | Local ASGI server |
 | `pydantic` | `2.13.5` | API/domain validation and serialization |
 | `pydantic-settings` | `2.15.0` | Strict bootstrap configuration |
-| `pymongo[srv]` | `4.18.1` | Async MongoDB Atlas driver and SRV resolution |
+| `pymongo` | `4.18.1` | Async MongoDB Atlas driver and SRV resolution (`dnspython` is a base dependency; the `srv` extra no longer exists — Decision 068) |
 | `livekit-agents[silero]` | `1.8.3` | Worker lifecycle, realtime participant/audio/data integration, plus local Silero VAD extra |
 | `livekit-api` | `1.2.1` | Server token, dispatch, room, and cleanup control plane |
-| `openai` | `3.19.2` | GPT-6 Luna Responses API streaming adapter |
+| `openai` | `2.54.0` | GPT-6 Luna Responses API streaming adapter (Decision 068: `livekit-agents 1.8.3` requires `openai>=2.50,<3`) |
 | `deepgram-sdk` | `7.10.0` | Nova-3 streaming STT adapter; PyPI release verified 2026-09-21 |
 | `sarvamai` | `0.1.34` | Bulbul v3 streaming TTS adapter |
 
@@ -88,6 +88,10 @@ Rules:
 - stable PyPI releases only; alpha, beta, RC, dev, and yanked versions are rejected;
 - preserve artifact provenance/hash information available through the lock/resolver;
 - `.venv` is local and excluded from version control.
+
+Prerelease exception (Decision 068): the transitive package `opentelemetry-semantic-conventions` (pulled in by `livekit-agents` through `opentelemetry-sdk`) publishes only `bN`-format versions upstream. The version frozen in `uv.lock` is accepted; it is not a direct dependency. The same exception covers the frontend transitive `gensync@1.0.0-beta.2` (Babel toolchain of `@vitejs/plugin-react`). No other prerelease is permitted.
+
+Build backend (Decision 068): `uv_build==0.12.18`, used only to install the project's own `src` layout.
 
 The uv tool itself is pinned/documented separately from application dependencies. A uv upgrade must not modify the dependency lock implicitly.
 
@@ -157,7 +161,7 @@ Sarvam's documented Python streaming-STT helper has raw-PCM constraints. This do
 
 ## 9. MongoDB integration choice
 
-Use `pymongo[srv]==4.18.1` and `pymongo.AsyncMongoClient` directly.
+Use `pymongo==4.18.1` and `pymongo.AsyncMongoClient` directly.
 
 - no Motor;
 - no Beanie or another ODM;
@@ -319,7 +323,7 @@ Incremental dependency licence/subscription cost: INR 0
 
 This does not make the overall system free. Provider API usage, LiveKit Cloud, Atlas Flex, network, storage, FX/tax, paid support, CI compute, and future hosting remain separate costs. Playwright browser downloads consume local disk/network but do not add an approved per-test software fee.
 
-Licences and dependency metadata are recorded/checked during lock creation. A package with an incompatible licence requires removal or separate approval.
+Licences and dependency metadata are recorded/checked during lock creation. Open licence risk (Decision 068): `sarvamai==0.1.34` declares no licence; terms must be confirmed with Sarvam before WP9. A package with an incompatible licence requires removal or separate approval.
 
 ## 18. Deferred decisions
 

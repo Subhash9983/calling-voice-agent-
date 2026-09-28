@@ -1,0 +1,78 @@
+[project]
+name = "voice-agent"
+version = "0.0.0"
+description = "Phase 0 browser voice agent backend (control API and LiveKit agent worker)."
+requires-python = "==3.12.14"
+# Exact direct pins: docs/13 §3 as amended by Decision 068.
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.53.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "pymongo==4.18.1",
+    "livekit-agents[silero]==1.8.3",
+    "livekit-api==1.2.1",
+    "openai==2.54.0",
+    "deepgram-sdk==7.10.0",
+    "sarvamai==0.1.34",
+]
+
+[dependency-groups]
+# docs/13 §12: pytest approved at 9.1.1; companions pinned to the versions
+# resolved by the WP1 lock.
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.9",
+    "mypy==2.3.1",
+]
+
+[build-system]
+requires = ["uv_build==0.12.18"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = "==0.12.18"
+
+# ---------------------------------------------------------------- ruff ----
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "S", "SIM", "RUF", "ASYNC", "PT", "TID"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# ---------------------------------------------------------------- mypy ----
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["voice_agent"]
+strict = true
+warn_unreachable = true
+
+# -------------------------------------------------------------- pytest ----
+[tool.pytest.ini_options]
+minversion = "9.1"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-ra", "--import-mode=importlib", "--strict-markers", "--strict-config"]
+markers = [
+    "local_model: loads a locally bundled model file (no network)",
+]
+filterwarnings = ["error"]
+
+# ------------------------------------------------------------ coverage ----
+[tool.coverage.run]
+source = ["voice_agent"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
