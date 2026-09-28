@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import pytest
 from tests.integration.control_api.conftest import API, ApiFactory, create_body, new_id
 
 from voice_agent.control_api.structured_logging import LOGGER_NAME
-from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.control_session import JoinTokenOutcome, SessionRecord
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.persistence.control_plane_memory import (
     InMemoryFeedbackRepository,
@@ -40,11 +41,32 @@ class ConflictingReplace(InMemorySessionRecordRepository):
         super().__init__()
         self.conflicts_remaining = 0
 
-    async def replace(self, record: SessionRecord, *, expected_revision: int) -> None:
+    def _maybe_conflict(self) -> None:
         if self.conflicts_remaining > 0:
             self.conflicts_remaining -= 1
             raise RevisionConflictError("concurrent writer")
+
+    async def replace(self, record: SessionRecord, *, expected_revision: int) -> None:
+        self._maybe_conflict()
         await super().replace(record, expected_revision=expected_revision)
+
+    async def record_join_token_request(
+        self,
+        session_id: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        fingerprint: str,
+        now: datetime,
+    ) -> JoinTokenOutcome:
+        self._maybe_conflict()
+        return await super().record_join_token_request(
+            session_id,
+            expected_revision=expected_revision,
+            client_request_id=client_request_id,
+            fingerprint=fingerprint,
+            now=now,
+        )
 
 
 class FailingEvents:

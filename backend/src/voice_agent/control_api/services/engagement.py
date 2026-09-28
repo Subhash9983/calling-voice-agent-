@@ -25,8 +25,8 @@ from voice_agent.control_api.projections import feedback_receipt
 from voice_agent.control_api.runtime import ControlPlaneRuntime
 from voice_agent.control_api.schemas.engagement import FeedbackReceipt, FeedbackRequest
 from voice_agent.control_api.services.common import load_session
-from voice_agent.domain.control_session import SessionRecord, request_fingerprint
-from voice_agent.domain.feedback import FeedbackContent, FeedbackRecord
+from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.feedback import FeedbackContent, FeedbackRecord, feedback_fingerprint
 from voice_agent.ports.control_plane import DuplicateKeyError
 
 CONSENT_NOT_AVAILABLE = "Consent capture is not available in this build; recording remains off."
@@ -43,7 +43,7 @@ def _content(request: FeedbackRequest) -> FeedbackContent:
 
 
 def _fingerprint(session_id: str, content: FeedbackContent) -> str:
-    return request_fingerprint({"session_id": session_id, **content.model_dump(mode="json")})
+    return feedback_fingerprint(session_id, content)
 
 
 def _replay(existing: FeedbackRecord, fingerprint: str) -> FeedbackResult:

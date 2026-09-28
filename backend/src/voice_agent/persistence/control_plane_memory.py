@@ -1,17 +1,23 @@
 """In-memory control-plane stores implementing ``ports.control_plane`` (WP4 only).
 
 Development/test fakes: unique idempotency keys, compare-and-set on
-``state_revision``, newest-first session pages, and sequence-ordered
-timelines. MongoDB implementations with the approved indexes are WP5. A store
-can be switched to ``available=False`` to exercise not-ready paths.
+``state_revision``, atomic join-token evidence, newest-first session pages,
+and sequence-ordered timelines. ``persistence.mongodb`` implements the same
+ports against the approved indexes. A store can be switched to
+``available=False`` to exercise not-ready paths.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from voice_agent.contracts.events import EventVisibility
-from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.control_session import (
+    JoinTokenOutcome,
+    SessionRecord,
+    apply_join_token_request,
+)
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.ports.control_plane import (
     DuplicateKeyError,
@@ -65,7 +71,36 @@ class InMemorySessionRecordRepository(_Availability):
         stored = self._items.get(record.session_id)
         if stored is None or stored.state_revision != expected_revision:
             raise RevisionConflictError("session revision changed")
-        self._items[record.session_id] = record
+        # Join-token evidence is store-owned: never overwritten by a replace.
+        self._items[record.session_id] = record.model_copy(
+            update={"join_token_requests": stored.join_token_requests}
+        )
+
+    async def record_join_token_request(
+        self,
+        session_id: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        fingerprint: str,
+        now: datetime,
+    ) -> JoinTokenOutcome:
+        """Atomic within the event loop: no await between read and write."""
+        self._require()
+        stored = self._items.get(session_id)
+        if stored is None or stored.state_revision != expected_revision:
+            raise RevisionConflictError("session revision changed")
+        entries, outcome = apply_join_token_request(
+            stored.join_token_requests,
+            client_request_id=client_request_id,
+            fingerprint=fingerprint,
+            now=now,
+        )
+        if outcome is not JoinTokenOutcome.FINGERPRINT_CONFLICT:
+            self._items[session_id] = stored.model_copy(
+                update={"join_token_requests": entries, "updated_at": now}
+            )
+        return outcome
 
     async def list_page(self, query: SessionListQuery) -> Sequence[SessionRecord]:
         self._require()
@@ -134,7 +169,18 @@ class InMemorySessionTimeline(_Availability):
         sequence = await self._allocator.next_sequence(record.envelope.session_id)
         envelope = record.envelope.model_copy(update={"sequence_number": sequence})
         self._events[envelope.event_id] = EventRecord(
-            envelope=envelope, severity=record.severity, recorded_at=record.recorded_at
+            envelope=envelope,
+            severity=record.severity,
+            recorded_at=record.recorded_at,
+            late_by_ms=record.late_by_ms,
+        )
+
+    async def known_event_ids(self, session_id: str, event_ids: Sequence[str]) -> frozenset[str]:
+        self._require()
+        return frozenset(
+            event_id
+            for event_id in event_ids
+            if event_id in self._events and self._events[event_id].envelope.session_id == session_id
         )
 
     async def list_turns(

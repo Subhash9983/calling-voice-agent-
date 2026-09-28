@@ -37,6 +37,9 @@ from voice_agent.domain.session import SESSION_TRANSITIONS, TERMINAL_SESSION_STA
 
 MAX_JOIN_TOKEN_REQUESTS = 10
 FINGERPRINT_PREFIX = "sha256:"
+# Approved default graceful-shutdown bound (docs/02 §24) used as the
+# termination deadline after an end request is accepted.
+DEFAULT_TERMINATION_GRACE_MS = 10_000
 # A join credential is issued only while the session is nonterminal and its
 # room exists (docs/04 §6-§7: no token for terminal sessions).
 JOINABLE_STATES: frozenset[SessionStatus] = frozenset(
@@ -62,6 +65,32 @@ def request_fingerprint(semantics: Mapping[str, JsonValue]) -> str:
     """Canonical SHA-256 fingerprint of a request's semantic fields."""
     canonical = json.dumps(semantics, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return FINGERPRINT_PREFIX + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def create_request_fingerprint(
+    *, agent_config_id: str, channel: str, session_mode: str, language_mode: str
+) -> str:
+    """Fingerprint of the session-create semantics (everything but the request ID).
+
+    Every input is a stored session field, so persistence re-derives the
+    fingerprint instead of storing an unapproved root field (docs/02 §6).
+    """
+    return request_fingerprint(
+        {
+            "agent_config_id": agent_config_id,
+            "channel": channel,
+            "session_mode": session_mode,
+            "language_mode": language_mode,
+        }
+    )
+
+
+class JoinTokenOutcome(StrEnum):
+    """Result of recording one join-token request (docs/02 §6)."""
+
+    RECORDED = "recorded"
+    REPLAYED = "replayed"
+    FINGERPRINT_CONFLICT = "fingerprint_conflict"
 
 
 class ComponentSnapshot(StrictModel):
@@ -101,6 +130,40 @@ class JoinTokenRequestEntry(StrictModel):
     first_requested_at: UtcDatetime
     last_issued_at: UtcDatetime
     issue_count: Annotated[int, Field(strict=True, ge=1)]
+
+
+def apply_join_token_request(
+    entries: tuple[JoinTokenRequestEntry, ...],
+    *,
+    client_request_id: str,
+    fingerprint: str,
+    now: datetime,
+) -> tuple[tuple[JoinTokenRequestEntry, ...], JoinTokenOutcome]:
+    """Record one request in the bounded list, keeping the 10 most recent issues.
+
+    Stores apply exactly this rule atomically (MongoDB: positional update or
+    ``$push`` with ``$sort``/``$slice``) so concurrent refreshes keep every entry.
+    """
+    match = next((e for e in entries if e.client_request_id == client_request_id), None)
+    if match is not None and match.fingerprint != fingerprint:
+        return entries, JoinTokenOutcome.FINGERPRINT_CONFLICT
+    if match is None:
+        entry = JoinTokenRequestEntry(
+            client_request_id=client_request_id,
+            fingerprint=fingerprint,
+            first_requested_at=now,
+            last_issued_at=now,
+            issue_count=1,
+        )
+        outcome = JoinTokenOutcome.RECORDED
+    else:
+        entry = match.model_copy(
+            update={"last_issued_at": now, "issue_count": match.issue_count + 1}
+        )
+        outcome = JoinTokenOutcome.REPLAYED
+    others = [e for e in entries if e.client_request_id != client_request_id]
+    ordered = sorted([*others, entry], key=lambda e: e.last_issued_at)
+    return tuple(ordered[-MAX_JOIN_TOKEN_REQUESTS:]), outcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,10 +212,30 @@ class SessionRecord(StrictModel):
     connecting_at: UtcDatetime | None = None
     ending_at: UtcDatetime | None = None
     ended_at: UtcDatetime | None = None
+    # Reconciler deadlines (docs/02 §6); each is present only while it is an
+    # active deadline for the current state.
+    connect_deadline_at: UtcDatetime | None = None
+    termination_deadline_at: UtcDatetime | None = None
 
     @property
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_SESSION_STATES
+
+    @property
+    def maximum_duration_deadline_at(self) -> datetime:
+        return self.created_at + timedelta(milliseconds=self.maximum_session_ms)
+
+    @property
+    def next_reconcile_at(self) -> datetime | None:
+        """Earliest business deadline; storage also merges worker/recovery leases."""
+        if self.is_terminal:
+            return None
+        candidates = (
+            self.connect_deadline_at,
+            self.termination_deadline_at,
+            self.maximum_duration_deadline_at,
+        )
+        return min(value for value in candidates if value is not None)
 
     def can_issue_join_token(self, now: datetime) -> bool:
         return (
@@ -181,7 +264,14 @@ class SessionRecord(StrictModel):
         return self._transition(SessionStatus.CONNECTING, now, transport=binding, connecting_at=now)
 
     def fail(self, reason: DisconnectReason, *, now: datetime) -> SessionRecord:
-        return self._transition(SessionStatus.FAILED, now, disconnect_reason=reason, ended_at=now)
+        return self._transition(
+            SessionStatus.FAILED,
+            now,
+            disconnect_reason=reason,
+            ended_at=now,
+            connect_deadline_at=None,
+            termination_deadline_at=None,
+        )
 
     def request_end(
         self,
@@ -190,6 +280,7 @@ class SessionRecord(StrictModel):
         reason: DisconnectReason,
         requested_by: TerminationRequester,
         now: datetime,
+        termination_grace_ms: int = DEFAULT_TERMINATION_GRACE_MS,
     ) -> EndDecision:
         """Create or reuse the authoritative termination request (docs/04 §9)."""
         existing = self.termination_request
@@ -207,33 +298,32 @@ class SessionRecord(StrictModel):
             revision=1,
         )
         ending = self._transition(
-            SessionStatus.ENDING, now, termination_request=request, ending_at=now
+            SessionStatus.ENDING,
+            now,
+            termination_request=request,
+            ending_at=now,
+            connect_deadline_at=None,
+            termination_deadline_at=now + timedelta(milliseconds=termination_grace_ms),
         )
         return EndDecision(record=ending, accepted=True)
 
     def record_join_token_request(
         self, *, client_request_id: str, fingerprint: str, now: datetime
     ) -> JoinDecision:
-        """Record bounded join-token evidence; never stores the token (docs/02 §6)."""
+        """Validate and preview one join-token request; never stores the token (docs/02 §6).
+
+        This is the snapshot decision. Stores persist the entry atomically
+        with :func:`apply_join_token_request`, whose outcome is authoritative.
+        """
         if not self.can_issue_join_token(now):
             raise LifecycleStateError("session is not joinable")
-        entries = list(self.join_token_requests)
-        match = next((e for e in entries if e.client_request_id == client_request_id), None)
-        if match is not None and match.fingerprint != fingerprint:
+        entries, outcome = apply_join_token_request(
+            self.join_token_requests,
+            client_request_id=client_request_id,
+            fingerprint=fingerprint,
+            now=now,
+        )
+        if outcome is JoinTokenOutcome.FINGERPRINT_CONFLICT:
             raise IdempotencyConflictError("join-token request reused with other semantics")
-        if match is None:
-            entry = JoinTokenRequestEntry(
-                client_request_id=client_request_id,
-                fingerprint=fingerprint,
-                first_requested_at=now,
-                last_issued_at=now,
-                issue_count=1,
-            )
-        else:
-            entries.remove(match)
-            entry = match.model_copy(
-                update={"last_issued_at": now, "issue_count": match.issue_count + 1}
-            )
-        kept = (*entries, entry)[-MAX_JOIN_TOKEN_REQUESTS:]
-        updated = self.model_copy(update={"join_token_requests": kept, "updated_at": now})
-        return JoinDecision(record=updated, replay=match is not None)
+        updated = self.model_copy(update={"join_token_requests": entries, "updated_at": now})
+        return JoinDecision(record=updated, replay=outcome is JoinTokenOutcome.REPLAYED)

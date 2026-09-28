@@ -3,7 +3,8 @@
 The control API reaches durable state only through these ports; route
 handlers never issue database queries. Queries are the approved bounded
 patterns only: exact IDs, enum filters, and cursor pagination. In-memory
-implementations back WP4; MongoDB implementations arrive in WP5.
+implementations back development/tests; ``persistence.mongodb`` implements
+them against the approved indexes (WP5).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Protocol, runtime_checkable
 from voice_agent.contracts.enums import OperationComponent, OperationStatus, SessionStatus
 from voice_agent.contracts.events import EventCategory, EventEnvelope, EventSeverity
 from voice_agent.domain.agent_config import AgentConfig
-from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.control_session import JoinTokenOutcome, SessionRecord
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
@@ -58,6 +59,8 @@ class EventRecord:
     envelope: EventEnvelope
     severity: EventSeverity
     recorded_at: datetime
+    # A retried/reconciled append is marked late (docs/02 §9 ``is_late``).
+    late_by_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +111,28 @@ class SessionRecordRepository(Protocol):
         ...
 
     async def replace(self, record: SessionRecord, *, expected_revision: int) -> None:
-        """Compare-and-set on ``state_revision``; raise ``RevisionConflictError`` when stale."""
+        """Compare-and-set on ``state_revision``; raise ``RevisionConflictError`` when stale.
+
+        Store-owned fields (``join_token_requests``, the event counter, worker
+        assignment, and recovery authorization) are never overwritten here.
+        """
+        ...
+
+    async def record_join_token_request(
+        self,
+        session_id: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        fingerprint: str,
+        now: datetime,
+    ) -> JoinTokenOutcome:
+        """Atomically record or replay one bounded join-token entry (docs/02 §6).
+
+        Applies only while ``state_revision == expected_revision``; raises
+        ``RevisionConflictError`` otherwise. Does not change ``state_revision``,
+        so concurrent refreshes never lose each other's audit entries.
+        """
         ...
 
     async def list_page(self, query: SessionListQuery) -> Sequence[SessionRecord]:
@@ -146,6 +170,10 @@ class SessionTimelineReader(Protocol):
 class SessionEventLog(Protocol):
     async def append(self, record: EventRecord) -> None:
         """Append a durable event with an allocated sequence; duplicates by ID are ignored."""
+        ...
+
+    async def known_event_ids(self, session_id: str, event_ids: Sequence[str]) -> frozenset[str]:
+        """Which of ``event_ids`` are already stored (reconciliation without new gaps)."""
         ...
 
 

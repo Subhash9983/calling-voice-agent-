@@ -1,7 +1,9 @@
 """Join-token refresh and idempotent session end (docs/04 §7, §9).
 
-Both mutations are compare-and-set on the session ``state_revision`` with a
-bounded retry. Session end records the authoritative termination request,
+Both mutations are conditioned on the session ``state_revision`` with a
+bounded retry. Join-token evidence is written by one atomic store operation
+(it never replaces the whole list, so concurrent refreshes cannot lose an
+entry). Session end records the authoritative termination request,
 moves the session to ``ending``, and emits ``session.end_requested`` once.
 Until worker leases exist (WP5/WP10) no LiveKit wake-up packet is sent; the
 durable request remains authoritative and the reconciler (a later WP)
@@ -36,11 +38,13 @@ from voice_agent.control_api.services.session_create import allocation_of, trans
 from voice_agent.domain.control_session import (
     EndDecision,
     JoinDecision,
+    JoinTokenOutcome,
     SessionRecord,
     TerminationRequester,
     request_fingerprint,
 )
 from voice_agent.domain.errors import IdempotencyConflictError, LifecycleStateError
+from voice_agent.ports.repositories import RevisionConflictError
 
 NOT_JOINABLE = "No join token is available for this session state."
 
@@ -57,14 +61,17 @@ class EndResult:
     accepted: bool
 
 
+def _join_fingerprint(record: SessionRecord) -> str:
+    return request_fingerprint({"operation": "join_token", "session_id": record.session_id})
+
+
 def _join_decision(
     record: SessionRecord, request: JoinTokenRequest, now: datetime
 ) -> JoinDecision | ApiError:
-    fingerprint = request_fingerprint({"operation": "join_token", "session_id": record.session_id})
     try:
         return record.record_join_token_request(
             client_request_id=request.client_request_id,
-            fingerprint=fingerprint,
+            fingerprint=_join_fingerprint(record),
             now=now,
         )
     except LifecycleStateError:
@@ -73,28 +80,54 @@ def _join_decision(
         return ApiError(ErrorCode.IDEMPOTENCY_CONFLICT)
 
 
+async def _record_join(
+    runtime: ControlPlaneRuntime, record: SessionRecord, request: JoinTokenRequest, now: datetime
+) -> JoinTokenOutcome | None:
+    """Atomic store-side evidence write; ``None`` when the session changed first."""
+    sessions = runtime.require_stores().sessions
+    fingerprint = _join_fingerprint(record)
+    try:
+        return await runtime.bounded(
+            sessions.record_join_token_request(
+                record.session_id,
+                expected_revision=record.state_revision,
+                client_request_id=request.client_request_id,
+                fingerprint=fingerprint,
+                now=now,
+            )
+        )
+    except RevisionConflictError:
+        return None
+
+
 async def refresh_join_token(
     runtime: ControlPlaneRuntime, session_id: str, request: JoinTokenRequest
 ) -> JoinResult:
+    """Record join evidence atomically (never a lost update), then issue a token."""
     runtime.require_ready()
     for _attempt in range(MAX_CAS_ATTEMPTS):
         record = await load_session(runtime, session_id)
-        decision = _join_decision(record, request, runtime.clock.utc_now())
+        now = runtime.clock.utc_now()
+        decision = _join_decision(record, request, now)
         if isinstance(decision, ApiError):
             raise decision
         binding = decision.record.transport
         if binding is None:  # pragma: no cover - guarded by the domain rule
             raise ApiError(ErrorCode.INVALID_STATE, NOT_JOINABLE)
         transport = runtime.transport_for(binding.provider)
-        if await try_replace(runtime, decision.record, expected_revision=record.state_revision):
-            credential = await issue_credential(runtime, transport, allocation_of(binding))
-            if credential is None:
-                raise transport_unavailable()
-            data = JoinTokenData(
-                session_id=record.session_id,
-                transport=transport_join(runtime, decision.record, credential),
-            )
-            return JoinResult(data=data, replay=decision.replay)
+        outcome = await _record_join(runtime, record, request, now)
+        if outcome is None:
+            continue
+        if outcome is JoinTokenOutcome.FINGERPRINT_CONFLICT:
+            raise ApiError(ErrorCode.IDEMPOTENCY_CONFLICT)
+        credential = await issue_credential(runtime, transport, allocation_of(binding))
+        if credential is None:
+            raise transport_unavailable()
+        data = JoinTokenData(
+            session_id=record.session_id,
+            transport=transport_join(runtime, decision.record, credential),
+        )
+        return JoinResult(data=data, replay=outcome is JoinTokenOutcome.REPLAYED)
     raise revision_conflict()
 
 

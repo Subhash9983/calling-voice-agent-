@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
 
 from voice_agent.contracts.base import Probability, StrictModel
 from voice_agent.contracts.failures import ErrorType
@@ -35,6 +35,11 @@ class RetryPolicy(StrictModel):
     retryable_error_types: Annotated[
         frozenset[ErrorType], Field(max_length=MAX_RETRYABLE_ERROR_TYPES)
     ] = DEFAULT_RETRYABLE_ERROR_TYPES
+
+    @field_serializer("retryable_error_types")
+    def _canonical_order(self, value: frozenset[ErrorType]) -> list[ErrorType]:
+        """Sorted, so configuration checksums are identical across processes/hash seeds."""
+        return sorted(value)
 
     @model_validator(mode="after")
     def _ordered_backoff(self) -> RetryPolicy:

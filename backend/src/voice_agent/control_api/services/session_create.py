@@ -12,6 +12,7 @@ while the session is nonterminal.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from voice_agent.contracts.enums import DisconnectReason
 from voice_agent.contracts.events import EventSeverity, EventType
@@ -39,7 +40,7 @@ from voice_agent.domain.control_session import (
     ProviderSnapshot,
     SessionRecord,
     TransportBinding,
-    request_fingerprint,
+    create_request_fingerprint,
 )
 from voice_agent.ports.control_plane import DuplicateKeyError
 from voice_agent.ports.transport_control import (
@@ -59,7 +60,18 @@ class CreateResult:
 
 
 def _fingerprint(request: SessionCreateRequest) -> str:
-    return request_fingerprint(request.model_dump(mode="json", exclude={"client_request_id"}))
+    return create_request_fingerprint(
+        agent_config_id=request.agent_config_id,
+        channel=request.channel,
+        session_mode=request.session_mode,
+        language_mode=request.language_mode,
+    )
+
+
+def _connect_deadline(config: AgentConfig, now: datetime) -> datetime:
+    """Both participants must join before this (docs/02 §6, §24 join timeouts)."""
+    policy = config.timeout_policy
+    return now + timedelta(milliseconds=max(policy.browser_join_ms, policy.agent_join_ms))
 
 
 def _snapshot(config: AgentConfig) -> ProviderSnapshot:
@@ -109,6 +121,7 @@ def _new_record(
         cost_rate_card_version=config.cost_rate_card_version,
         created_at=now,
         updated_at=now,
+        connect_deadline_at=_connect_deadline(config, now),
     )
 
 

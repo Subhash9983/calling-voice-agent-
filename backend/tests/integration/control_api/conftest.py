@@ -17,6 +17,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from tests.support.fake_mongo import FakeClient, FakeDatabase
 
 from voice_agent.control_api.app import create_app
 from voice_agent.control_api.runtime import (
@@ -31,6 +32,7 @@ from voice_agent.persistence.control_plane_memory import (
     InMemorySessionTimeline,
 )
 from voice_agent.persistence.in_memory import InMemoryEventSequenceAllocator
+from voice_agent.persistence.mongodb.client import MongoPersistence
 from voice_agent.ports.transport_control import TransportControl
 from voice_agent.provider_registry.mock_config import MOCK_AGENT_CONFIG_ID
 from voice_agent.security.readiness import PersistenceMode
@@ -108,6 +110,7 @@ def api_factory() -> ApiFactory:
         events: Any = None,
         timeout_s: float = 2.0,
         headers: Mapping[str, str] | None = None,
+        mongo: MongoPersistence | None = None,
     ) -> AsyncIterator[Api]:
         timeline = InMemorySessionTimeline(InMemoryEventSequenceAllocator())
         session_store = sessions or InMemorySessionRecordRepository()
@@ -120,11 +123,19 @@ def api_factory() -> ApiFactory:
         )
         mock = MockTransportControl()
         clock = ManualClock()
+        mongo_mode = persistence is PersistenceMode.MONGODB
+        if mongo_mode and mongo is None:
+            # Never reach a real cluster from this harness: default to an
+            # unreachable in-process fake.
+            database = FakeDatabase()
+            database.available = False
+            mongo = MongoPersistence.from_handles(FakeClient(database), database)
         app = create_app(
             environ=dict(READY_ENV if environ is None else environ),
             persistence=persistence,
             overrides=RuntimeOverrides(
-                stores=stores,
+                stores=None if mongo_mode else stores,
+                persistence=mongo,
                 transports=_transports(mock, extra_transports),
                 clock=clock,
                 ids=UuidIdGenerator(),

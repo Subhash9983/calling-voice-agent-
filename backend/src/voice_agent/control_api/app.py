@@ -12,6 +12,7 @@ it makes readiness and every ``/api/v1`` route report the not-ready state.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -29,7 +30,13 @@ from voice_agent.control_api.access import (
 from voice_agent.control_api.error_handlers import install_exception_handlers
 from voice_agent.control_api.middleware import RequestContextMiddleware
 from voice_agent.control_api.routes import diagnostics, health, sessions
-from voice_agent.control_api.runtime import ControlPlaneRuntime, RuntimeOverrides, build_runtime
+from voice_agent.control_api.runtime import (
+    ControlPlaneRuntime,
+    RuntimeOverrides,
+    build_runtime,
+    start_persistence,
+    stop_persistence,
+)
 from voice_agent.control_api.schemas.diagnostics import (
     ErrorListParams,
     EventListParams,
@@ -56,7 +63,7 @@ from voice_agent.security.readiness import PersistenceMode, ProcessRole
 from voice_agent.security.settings import AppEnvironment
 
 API_TITLE = "Voice agent control API"
-API_VERSION = "0.4.0"
+API_VERSION = "0.5.0"
 REQUEST_MODELS = (
     AgentConfigListParams,
     SessionCreateRequest,
@@ -88,7 +95,9 @@ def _runtime_of(app: FastAPI) -> ControlPlaneRuntime:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    report = _runtime_of(app).startup_report
+    runtime = await start_persistence(_runtime_of(app))
+    app.state.runtime = runtime
+    report = runtime.startup_report
     log_event(
         get_logger(),
         logging.INFO,
@@ -96,8 +105,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ready=report.ready,
         reasons=[reason.value for reason in report.reasons],
     )
-    yield
-    log_event(get_logger(), logging.INFO, "control_api.stopped")
+    stop = asyncio.Event()
+    outbox = runtime.event_outbox
+    drain = None if outbox is None else asyncio.create_task(outbox.run(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        if outbox is not None and drain is not None:
+            outbox.wake()
+            await drain
+            await outbox.drain_once()
+        await stop_persistence(runtime)
+        log_event(get_logger(), logging.INFO, "control_api.stopped")
 
 
 def create_app(

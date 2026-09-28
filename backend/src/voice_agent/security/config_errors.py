@@ -46,6 +46,10 @@ class ConfigReason(StrEnum):
     PERSISTENCE_MODE_NOT_ALLOWED = "persistence_mode_not_allowed"
     # A configured dependency has no usable implementation or is unreachable.
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
+    # The database is reachable but its validators/indexes differ from the
+    # approved design, or the default configuration version is not stored.
+    PERSISTENCE_SCHEMA_MISMATCH = "persistence_schema_mismatch"
+    AGENT_CONFIG_NOT_PERSISTED = "agent_config_not_persisted"
     AGENT_CONFIG_NOT_CONFIGURED = "agent_config_not_configured"
     AGENT_CONFIG_NOT_FOUND = "agent_config_not_found"
     AGENT_CONFIG_INVALID = "agent_config_invalid"

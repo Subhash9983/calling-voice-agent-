@@ -9,6 +9,7 @@ it. Validation errors never echo input values.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from voice_agent.contracts.base import CanonicalId, ExternalIdentifier, ShortLabel, UtcDatetime
 from voice_agent.domain.agent_config import AgentConfigEnvironment
+from voice_agent.domain.control_session import request_fingerprint
 
 MAX_ASPECTS = 8
 MAX_REASON_CODES = 10
@@ -202,6 +204,44 @@ class FeedbackContent(FeedbackModel):
         return self
 
 
+class ReviewStatus(StrEnum):
+    UNREVIEWED = "unreviewed"
+    TRIAGED = "triaged"
+    ACCEPTED = "accepted"
+    DISMISSED = "dismissed"
+    RESOLVED = "resolved"
+
+
+class ResolutionCode(StrEnum):
+    PROVIDER_ISSUE = "provider_issue"
+    CONFIGURATION_ISSUE = "configuration_issue"
+    PROMPT_ISSUE = "prompt_issue"
+    KNOWLEDGE_ISSUE = "knowledge_issue"
+    UI_ISSUE = "ui_issue"
+    EXPECTED_BEHAVIOR = "expected_behavior"
+    DUPLICATE = "duplicate"
+    CANNOT_REPRODUCE = "cannot_reproduce"
+    FIXED = "fixed"
+
+
+class FeedbackReview(FeedbackModel):
+    """The only mutable part of a feedback record (docs/02 §11 ``review``)."""
+
+    status: ReviewStatus = ReviewStatus.UNREVIEWED
+    reviewed_by: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    reviewed_at: UtcDatetime | None = None
+    resolution_code: ResolutionCode | None = None
+    review_note: (
+        Annotated[str, Field(min_length=1, max_length=MAX_EXPECTED_ACTION_CHARS)] | None
+    ) = None
+    review_revision: Annotated[int, Field(strict=True, ge=0)] = 0
+
+
+def feedback_fingerprint(session_id: str, content: FeedbackContent) -> str:
+    """Idempotency fingerprint of a submission, derivable from stored content."""
+    return request_fingerprint({"session_id": session_id, **content.model_dump(mode="json")})
+
+
 class FeedbackRecord(FeedbackModel):
     """Stored feedback; provider/configuration context is backend-derived."""
 
@@ -216,5 +256,39 @@ class FeedbackRecord(FeedbackModel):
     submitter_type: Literal["internal_tester"] = "internal_tester"
     submitter_source: Literal["rd_browser_ui"] = "rd_browser_ui"
     reason_taxonomy_version: ShortLabel = REASON_TAXONOMY_VERSION
-    review_status: Literal["unreviewed"] = "unreviewed"
+    review: FeedbackReview = FeedbackReview()
     created_at: UtcDatetime
+    updated_at: UtcDatetime | None = None
+    supersedes_feedback_id: CanonicalId | None = None
+
+    @model_validator(mode="after")
+    def _updated_not_before_created(self) -> FeedbackRecord:
+        if self.updated_at is not None and self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
+
+    @property
+    def last_updated_at(self) -> datetime:
+        return self.updated_at or self.created_at
+
+    def reviewed(
+        self,
+        *,
+        status: ReviewStatus,
+        reviewer: str,
+        now: datetime,
+        resolution_code: ResolutionCode | None = None,
+        note: str | None = None,
+    ) -> FeedbackRecord:
+        """Only the review section changes; submitter content is immutable (docs/02 §11)."""
+        if status is ReviewStatus.UNREVIEWED:
+            raise ValueError("a review cannot return feedback to unreviewed")
+        review = FeedbackReview(
+            status=status,
+            reviewed_by=reviewer,
+            reviewed_at=now,
+            resolution_code=resolution_code,
+            review_note=note,
+            review_revision=self.review.review_revision + 1,
+        )
+        return self.model_copy(update={"review": review, "updated_at": now})

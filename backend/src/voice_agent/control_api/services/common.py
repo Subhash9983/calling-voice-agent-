@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable
 from contextlib import suppress
+from datetime import datetime
 
 from pydantic import JsonValue
 
@@ -15,6 +16,7 @@ from voice_agent.control_api.request_context import bind_session
 from voice_agent.control_api.runtime import ControlPlaneRuntime
 from voice_agent.control_api.structured_logging import get_logger, log_event
 from voice_agent.domain.control_session import SessionRecord
+from voice_agent.events_and_latency.lifecycle import lifecycle_event_id
 from voice_agent.ports.control_plane import EventRecord, StoreUnavailableError
 from voice_agent.ports.repositories import RevisionConflictError
 from voice_agent.ports.transport_control import (
@@ -70,13 +72,48 @@ async def emit_session_event(
     severity: EventSeverity = EventSeverity.INFO,
     payload: dict[str, JsonValue] | None = None,
 ) -> None:
-    """Append a browser-safe durable lifecycle event; a failure is logged, not raised."""
+    """Append a browser-safe durable lifecycle event without blocking the request.
+
+    The event ID is deterministic per ``(session, event type)``. A transient
+    append failure is logged and handed to the bounded outbox, which retries
+    it in the background; the store deduplicates any replay by event ID, and
+    a reconciler can rebuild a still-missing lifecycle event from session
+    state (``lifecycle_repair``).
+    """
     stores = runtime.require_stores()
     now = runtime.clock.utc_now()
-    envelope = EventEnvelope(
-        event_id=runtime.ids.new_id(),
+    event = EventRecord(
+        lifecycle_envelope(record, event_type, occurred_at=now, payload=payload), severity, now
+    )
+    appended = False
+    with suppress(TimeoutError, StoreUnavailableError):
+        async with asyncio.timeout(runtime.dependency_timeout_s):
+            await stores.events.append(event)
+            appended = True
+    if not appended:
+        deferred = runtime.event_outbox is not None
+        if runtime.event_outbox is not None:
+            runtime.event_outbox.defer(event, attempts=1)
+        log_event(
+            get_logger(),
+            logging.WARNING,
+            "session_event.append_failed",
+            operation=event_type,
+            outcome="deferred" if deferred else "dropped",
+        )
+
+
+def lifecycle_envelope(
+    record: SessionRecord,
+    event_type: EventType,
+    *,
+    occurred_at: datetime,
+    payload: dict[str, JsonValue] | None = None,
+) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=lifecycle_event_id(record.session_id, event_type),
         event_type=event_type,
-        occurred_at=now,
+        occurred_at=occurred_at,
         session_id=record.session_id,
         correlation_id=record.correlation_id,
         component=PRODUCER_SERVICE,
@@ -84,15 +121,6 @@ async def emit_session_event(
         visibility=EventVisibility.BROWSER_SAFE,
         payload=payload or {},
     )
-    appended = False
-    with suppress(TimeoutError, StoreUnavailableError):
-        async with asyncio.timeout(runtime.dependency_timeout_s):
-            await stores.events.append(EventRecord(envelope, severity, now))
-            appended = True
-    if not appended:
-        log_event(
-            get_logger(), logging.WARNING, "session_event.append_failed", operation=event_type
-        )
 
 
 async def _transport_call[T](runtime: ControlPlaneRuntime, call: Awaitable[T]) -> T | None:
