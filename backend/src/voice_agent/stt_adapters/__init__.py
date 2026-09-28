@@ -1,4 +1,4 @@
 """Streaming speech-to-text adapters.
 
-Phase 0 skeleton (WP1): intentionally empty; see docs/03-backend-module-design.md.
+WP2: deterministic mock adapter; Deepgram arrives in WP7.
 """

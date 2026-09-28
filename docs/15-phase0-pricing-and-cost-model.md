@@ -1,15 +1,15 @@
 # Phase 0 Pricing and Cost Model
 
 Status: Approved for Phase 0 R&D  
-Authority: Decision 039 with Decisions 048, 049, 066, and 067 amendments  
+Authority: Decision 039 with Decisions 048, 049, 066, 067, and 069 amendments  
 Scope: Dated Phase 0 provider, platform, database, and per-session cost model  
 Depends on: `00-voice-agent-master-plan.md`, `07-stt-adapter-and-baseline.md`, `08-conversation-adapter-and-llm-baseline.md`, `09-tts-adapter-and-voice-baseline.md`, `11-phase0-evaluation-plan.md`  
 Implementation status: Not started  
-Last reviewed: 2026-09-26
+Last reviewed: 2026-09-28
 
 Rate-card ID: `phase0_rate_card_2026_09_26_v1`  
 Research date: 2026-09-26  
-Reporting currency: USD evidence plus INR normalized/display cost
+Reporting currency: USD normalized (Decision 016); INR display/report conversion (Decision 069)
 
 ## 1. Purpose
 
@@ -165,7 +165,7 @@ Rules:
 - final invoice cost uses the actual card/bank/provider conversion evidence when available;
 - bank/card FX spread and foreign transaction fee are separate cost lines, never hidden by changing the provider rate;
 - Sarvam INR charges are not converted through USD;
-- every calculation stores source currency, original amount, FX rate, FX date/source/type, normalized INR amount, and rounding method;
+- every calculation stores source currency, original amount, FX rate, FX date/source/type, normalized USD amount, INR display amount, and rounding method (Decision 069);
 - a changed planning FX rate creates a new rate-card version.
 
 ## 4. Tax and payment treatment
@@ -366,7 +366,7 @@ Each provider operation records, when available:
 - attempt result, retry/cancellation lineage, and usage status;
 - gross provider cost in source currency;
 - applied credit/discount separately;
-- FX source/rate/date and INR normalized value;
+- FX source/rate/date, USD normalized value, and INR display value;
 - tax/payment/FX-fee status;
 - calculation status and timestamp;
 - estimation reason when provider-final evidence is unavailable.

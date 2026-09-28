@@ -1,7 +1,7 @@
 # Voice Agent Master Plan
 
 Status: Approved for Phase 0 R&D  
-Authority: Decisions 001–068  
+Authority: Decisions 001–069  
 Scope: Local single-user browser voice-agent baseline and its approved R&D evidence contracts  
 Depends on: None  
 Implementation status: Not started  
@@ -2161,3 +2161,19 @@ Reason:
 The WP1 compatibility gate (`docs/14` §7) found the approved direct pins unresolvable as written. The changes are the minimal evidence-backed corrections; no provider, model, or other direct pin changes.
 
 Detailed design: `docs/13-dependency-and-version-matrix.md` §3, §4, §9. Evidence: `outputs/evidence/wp01-scaffold/`.
+
+### Decision 069: WP2 contract clarifications
+
+Status: Approved (user, 2026-09-28)
+
+Decision:
+
+- **Cost currency:** stored cost records normalize to USD per Decision 016; INR is a display/report conversion. The INR planning figures in `docs/15` (for example INR 27.925/session and the budgets) are unchanged; `docs/15` wording that called INR "normalized" is corrected;
+- **Interruption while thinking:** the interruption candidate rule (≥250 ms confirmation, canonical order of Decision 067 S9) also applies after a turn is committed and before any agent audio plays, at the normal 0.5 activation threshold; a confirmed candidate cancels the stale response and the new utterance becomes the next turn.
+
+Reason:
+
+The WP2 QA gate found `docs/15` conflicting with Decision 016 on the normalized currency, and the docs silent on barge-in before playback starts.
+
+Detailed design: `docs/05-agent-worker-orchestration.md` §16, `docs/15-phase0-pricing-and-cost-model.md`. Evidence: `outputs/evidence/wp02-contracts-mock/`.
+

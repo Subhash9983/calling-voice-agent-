@@ -1,11 +1,11 @@
 # Agent Worker and Orchestration Design
 
 Status: Approved for Phase 0 R&D  
-Authority: Decision 029 with Decisions 042, 044, 051, 052, 060, 061, 062, 065, and 067 amendments  
+Authority: Decision 029 with Decisions 042, 044, 051, 052, 060, 061, 062, 065, 067, and 069 amendments  
 Scope: Worker ownership, queues, turn orchestration, recovery, and finalization  
 Depends on: `00-voice-agent-master-plan.md`, `01-system-contracts.md`, `02-database-design.md`, `03-backend-module-design.md`, `04-control-api-contract.md`  
 Implementation status: Not started  
-Last reviewed: 2026-09-26
+Last reviewed: 2026-09-28
 
 Runtime: Python LiveKit agent worker  
 Architecture: One orchestrator and one user-visible state writer per voice session
@@ -369,6 +369,8 @@ Accepted barge-in follows the canonical interruption order (Decision 067; identi
 Step 6 covers persisting delivered-content evidence and marking the turn `interrupted`. From step 2 onward every old-generation frame/event is rejected. The next utterance then opens a new turn.
 
 While agent audio is playing, the Silero activation threshold for interruption candidates rises from 0.5 to 0.7 (`vad.playback_activation_threshold`, Decision 067); the 250 ms confirmation still applies.
+
+The same candidate rule applies while the agent is thinking (LLM streaming or TTS synthesis started, no agent audio played yet), at the normal 0.5 threshold: a confirmed candidate runs the canonical order above and cancels the stale response, and the new utterance becomes the next turn (Decision 069).
 
 Playback acknowledgements are identified by (`worker_assignment.generation`, cancellation generation, `segment_id`). The cancellation generation is in-memory only; there is no durable cancellation-generation field, and cross-process fencing uses `writer_epoch` and the worker generation.
 

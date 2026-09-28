@@ -133,3 +133,68 @@ def test_package_resolution_for_init_and_module() -> None:
 
     assert _package_of(init) == "voice_agent.domain"
     assert _package_of(module) == "voice_agent.domain"
+
+
+# Application packages that must stay provider-neutral (docs/03 §4, §7, §9,
+# §19-§22). ``speech_activity`` is excluded: it will host the Silero adapter.
+NEUTRAL_PACKAGES: tuple[str, ...] = (
+    "orchestration",
+    "turn_management",
+    "response_segmentation",
+    "costing",
+    "events_and_latency",
+    "security",
+    "privacy_and_retention",
+)
+# Orchestration "uses ports only" (docs/03 §7): no adapter or persistence imports.
+ORCHESTRATION_FORBIDDEN_INTERNAL: frozenset[str] = frozenset(
+    {
+        "transport_adapters",
+        "stt_adapters",
+        "conversation_adapters",
+        "tts_adapters",
+        "persistence",
+        "provider_registry",
+        "control_api",
+        "agent_worker",
+    }
+)
+
+
+def _modules_of(packages: tuple[str, ...]) -> list[Path]:
+    return sorted(path for pkg in packages for path in (PACKAGE_ROOT / pkg).rglob("*.py"))
+
+
+def test_core_scan_is_non_vacuous() -> None:
+    for pkg in CORE_PACKAGES:
+        implementation = [p for p in (PACKAGE_ROOT / pkg).rglob("*.py") if p.name != "__init__.py"]
+        assert implementation, f"{pkg} has no implementation modules to scan"
+
+
+@pytest.mark.parametrize(
+    "path", _modules_of(NEUTRAL_PACKAGES), ids=lambda p: p.relative_to(PACKAGE_ROOT).as_posix()
+)
+def test_neutral_module_imports_no_framework_or_provider_sdk(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    external = [
+        name
+        for name in _imported_modules(source, _package_of(path))
+        if name.split(".")[0] in FORBIDDEN_EXTERNAL_ROOTS
+    ]
+
+    assert external == []
+
+
+@pytest.mark.parametrize(
+    "path", _modules_of(("orchestration",)), ids=lambda p: p.relative_to(PACKAGE_ROOT).as_posix()
+)
+def test_orchestration_depends_on_ports_not_adapters(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    reached = [
+        name
+        for name in _imported_modules(source, _package_of(path))
+        if name.startswith("voice_agent.")
+        and name.split(".")[1] in ORCHESTRATION_FORBIDDEN_INTERNAL
+    ]
+
+    assert reached == []

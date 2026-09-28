@@ -1,4 +1,5 @@
 """Application orchestrator coordinating a voice session through ports.
 
-Phase 0 skeleton (WP1): intentionally empty; see docs/03-backend-module-design.md.
+WP2: single-writer command loop, generation fence, bounded queues,
+cancellation, retry classification, and idempotent finalization.
 """

@@ -1,4 +1,4 @@
 """Local speech-activity detection behind SpeechActivityPort.
 
-Phase 0 skeleton (WP1): intentionally empty; see docs/03-backend-module-design.md.
+WP2: deterministic mock detector; the Silero adapter arrives in WP7.
 """
