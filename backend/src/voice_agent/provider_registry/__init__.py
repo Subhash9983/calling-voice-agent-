@@ -1,4 +1,5 @@
 """Mapping of approved provider configurations to adapter implementations.
 
-Phase 0 skeleton (WP1): intentionally empty; see docs/03-backend-module-design.md.
+WP3: approved identity/option allowlists, the offline mock configuration,
+and the fail-safe startup configuration check (docs/03 §17).
 """

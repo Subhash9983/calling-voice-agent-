@@ -212,7 +212,9 @@ VITE_APP_ENV=development
 VITE_BUILD_VERSION=<build-version>
 ```
 
-All `VITE_*` values are treated as public because they can be embedded in the browser bundle.
+`VITE_APP_ENV` accepts only `development` or `rd`, matching the Phase 0 `APP_ENV` rule; `production` is rejected.
+
+All `VITE_*` values are treated as public because they can be embedded in the browser bundle. Vite embeds every `VITE_`-prefixed variable regardless of whether code reads it, so a secret must never be given a `VITE_` prefix.
 
 Never expose through the bundle, HTML, source maps, local storage, browser logs, or public configuration responses:
 

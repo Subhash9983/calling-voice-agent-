@@ -156,7 +156,8 @@ Root fields:
 Embedded `transport` fields:
 
 - required `provider`, `adapter_version`, and `credential_ref`;
-- optional `region_label` and validated `safe_options`.
+- optional `region_label` and validated `safe_options`;
+- the transport `credential_ref` is recorded evidence only: its sole approved value is `env:LIVEKIT_API_KEY`, and it is never resolved through the credential resolver. LiveKit keys are bootstrap-only and loaded at process start (doc 12 §9), not selected by reference.
 
 Embedded `stt` fields:
 
@@ -187,7 +188,8 @@ Embedded `turn_handling` fields:
 - `minimum_interruption_ms`;
 - `minimum_endpointing_ms` and `maximum_endpointing_ms`;
 - `false_interruption_suppression`;
-- `preemptive_generation`.
+- `preemptive_generation`;
+- `vad` sub-object with the named speech-activity keys from doc 12 §7: `activation_threshold` (default `0.5`), `playback_activation_threshold` (default `0.7`, never below `activation_threshold`), `minimum_speech_ms`, `prefix_padding_ms`, and `silence_detection_ms`.
 
 Embedded `timeout_policy` fields:
 

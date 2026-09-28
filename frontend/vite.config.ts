@@ -14,5 +14,7 @@ export default defineConfig({
     include: ["tests/**/*.test.{ts,tsx}"],
     css: false,
     restoreMocks: true,
+    // The default forks pool hangs on Windows when the repo path contains a space.
+    pool: "threads",
   },
 });

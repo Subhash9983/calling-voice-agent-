@@ -98,6 +98,7 @@ frontend/
         api/
         audio/
         components/
+        config/
         contracts/
         livekit/
         session/
