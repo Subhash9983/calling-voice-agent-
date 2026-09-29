@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import Any
 
 from voice_agent.control_api.errors import dependency_unavailable
+from voice_agent.control_api.nudges import ReconcileNudges
 from voice_agent.control_api.readiness import (
     compose_startup_report,
     persistence_component_ready,
@@ -31,11 +32,16 @@ from voice_agent.events_and_latency.clock import SystemClock, UuidIdGenerator
 from voice_agent.events_and_latency.outbox import DurableEventOutbox
 from voice_agent.persistence.control_plane_memory import (
     InMemoryFeedbackRepository,
+    InMemorySessionReconciliation,
     InMemorySessionRecordRepository,
     InMemorySessionTimeline,
 )
 from voice_agent.persistence.in_memory import InMemoryEventSequenceAllocator
 from voice_agent.persistence.mongodb.client import MongoPersistence
+from voice_agent.persistence.mongodb.repositories.leases import (
+    MongoSessionReconciliationRepository,
+    MongoWorkerLeaseRepository,
+)
 from voice_agent.persistence.mongodb.stores import (
     mongo_control_plane_stores,
     verify_persistence,
@@ -49,17 +55,29 @@ from voice_agent.ports.control_plane import (
     SessionTimelineReader,
     StoreUnavailableError,
 )
+from voice_agent.ports.session_lifecycle import (
+    SessionReconciliationRepository,
+    WorkerLeaseRepository,
+)
 from voice_agent.ports.transport_control import TransportControl
 from voice_agent.provider_registry.catalog import ApprovedAgentConfigCatalog
 from voice_agent.provider_registry.startup_check import StartupOutcome
 from voice_agent.security.readiness import PersistenceMode, ReadinessReport
 from voice_agent.security.settings import BootstrapSettings
+from voice_agent.transport_adapters.livekit.control import (
+    LIVEKIT_PROVIDER,
+    LiveKitTransportControl,
+)
 from voice_agent.transport_adapters.mock.control import MockTransportControl
 from voice_agent.transport_adapters.unavailable import UnavailableTransportControl
 
 DEPENDENCY_TIMEOUT_S = 2.0
+# LiveKit control calls are remote HTTPS round trips (room + dispatch take
+# ~1.5 s from the R&D host), so they get their own bound, below the SDK's
+# 10 s client timeout, instead of the 2 s store bound.
+TRANSPORT_TIMEOUT_S = 8.0
 NOT_READY_MESSAGE = "The service is not ready; check /health/ready."
-SERVICE_VERSION = "0.5.0"
+SERVICE_VERSION = "0.6.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,15 +86,20 @@ class ControlPlaneStores:
     feedback: FeedbackRepository
     timeline: SessionTimelineReader
     events: SessionEventLog
+    # Session reconciler dependencies (docs/05 §21); absent -> no reconciler.
+    reconciliation: SessionReconciliationRepository | None = None
+    leases: WorkerLeaseRepository | None = None
 
 
 def in_memory_stores() -> ControlPlaneStores:
     timeline = InMemorySessionTimeline(InMemoryEventSequenceAllocator())
+    sessions = InMemorySessionRecordRepository()
     return ControlPlaneStores(
-        sessions=InMemorySessionRecordRepository(),
+        sessions=sessions,
         feedback=InMemoryFeedbackRepository(),
         timeline=timeline,
         events=timeline,
+        reconciliation=InMemorySessionReconciliation(sessions),
     )
 
 
@@ -91,14 +114,26 @@ def mongo_stores(persistence: MongoPersistence, settings: BootstrapSettings) -> 
         feedback=stores.feedback,
         timeline=stores.timeline,
         events=stores.events,
+        reconciliation=MongoSessionReconciliationRepository(persistence),
+        leases=MongoWorkerLeaseRepository(persistence),
     )
 
 
-def default_transports() -> Mapping[str, TransportControl]:
+def livekit_transport(settings: BootstrapSettings | None) -> TransportControl:
+    """The LiveKit control adapter when URL/key/secret are configured (docs/12 §5, §12)."""
+    if settings is None:
+        return UnavailableTransportControl(LIVEKIT_PROVIDER)
+    url, key, secret = settings.livekit_url, settings.livekit_api_key, settings.livekit_api_secret
+    if url is None or key is None or secret is None:
+        return UnavailableTransportControl(LIVEKIT_PROVIDER)
+    if not key.get_secret_value().strip() or not secret.get_secret_value().strip():
+        return UnavailableTransportControl(LIVEKIT_PROVIDER)
+    return LiveKitTransportControl(url=url, api_key=key, api_secret=secret)
+
+
+def default_transports(settings: BootstrapSettings | None = None) -> Mapping[str, TransportControl]:
     mock = MockTransportControl()
-    return MappingProxyType(
-        {mock.provider: mock, "livekit": UnavailableTransportControl("livekit")}
-    )
+    return MappingProxyType({mock.provider: mock, LIVEKIT_PROVIDER: livekit_transport(settings)})
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +147,7 @@ class RuntimeOverrides:
     config_documents: Sequence[Mapping[str, Any]] | None = None
     dependency_timeout_s: float = DEPENDENCY_TIMEOUT_S
     persistence: MongoPersistence | None = None
+    transport_timeout_s: float = TRANSPORT_TIMEOUT_S
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,10 +160,12 @@ class ControlPlaneRuntime:
     clock: Clock = field(default_factory=SystemClock)
     ids: IdGenerator = field(default_factory=UuidIdGenerator)
     dependency_timeout_s: float = DEPENDENCY_TIMEOUT_S
+    transport_timeout_s: float = TRANSPORT_TIMEOUT_S
     persistence: MongoPersistence | None = None
     event_outbox: DurableEventOutbox | None = None
     # MongoDB mode: the configuration report before persistence verification.
     unverified_report: ReadinessReport | None = None
+    nudges: ReconcileNudges = field(default_factory=ReconcileNudges)
 
     def require_settings(self) -> BootstrapSettings:
         if self.settings is None:
@@ -184,7 +222,7 @@ def build_runtime(
     overrides: RuntimeOverrides,
 ) -> ControlPlaneRuntime:
     settings = outcome.loaded.settings if outcome.loaded is not None else None
-    transports = overrides.transports or default_transports()
+    transports = overrides.transports or default_transports(settings)
     catalog = (
         None
         if settings is None
@@ -218,6 +256,7 @@ def build_runtime(
         clock=clock,
         ids=overrides.ids or UuidIdGenerator(),
         dependency_timeout_s=overrides.dependency_timeout_s,
+        transport_timeout_s=overrides.transport_timeout_s,
         persistence=mongo,
         event_outbox=outbox,
         unverified_report=base if mongo is not None else None,
@@ -248,6 +287,13 @@ async def start_persistence(runtime: ControlPlaneRuntime) -> ControlPlaneRuntime
 async def stop_persistence(runtime: ControlPlaneRuntime) -> None:
     if runtime.persistence is not None:
         await runtime.persistence.close()
+
+
+async def close_transports(runtime: ControlPlaneRuntime) -> None:
+    """Close every control-plane transport client; one failure never blocks the rest."""
+    for transport in runtime.transports.values():
+        with suppress(Exception):
+            await transport.aclose()
 
 
 def _default_transport_available(

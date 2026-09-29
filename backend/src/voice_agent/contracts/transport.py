@@ -12,6 +12,7 @@ from pydantic import Field, model_validator
 
 from voice_agent.contracts.audio import AudioFrame
 from voice_agent.contracts.base import CanonicalId, StrictModel
+from voice_agent.contracts.enums import DisconnectReason
 from voice_agent.contracts.identity import PlaybackAckIdentity
 
 
@@ -62,4 +63,67 @@ class ClientReady(StrictModel):
     kind: Literal["client_ready"] = "client_ready"
 
 
-ClientEvent = Annotated[PlaybackAck | ClientReady, Field(discriminator="kind")]
+class ClientMicState(StrictModel):
+    """Explicit browser mute/unmute (``client.mic_muted`` / ``client.mic_unmuted``)."""
+
+    kind: Literal["mic_state"] = "mic_state"
+    muted: bool
+
+
+MAX_BROWSER_PLAYOUT_MS = 60_000
+MAX_NETWORK_ONE_WAY_MS = 10_000
+
+
+class ClientLatencySample(StrictModel):
+    """Bounded per-turn browser playout span and RTT/2 estimate (docs/06 §15)."""
+
+    kind: Literal["latency_sample"] = "latency_sample"
+    turn_id: CanonicalId
+    browser_playout_ms: Annotated[int, Field(ge=0, le=MAX_BROWSER_PLAYOUT_MS)]
+    network_one_way_ms: Annotated[int, Field(ge=0, le=MAX_NETWORK_ONE_WAY_MS)] | None = None
+
+
+ClientEvent = Annotated[
+    PlaybackAck | ClientReady | ClientMicState | ClientLatencySample,
+    Field(discriminator="kind"),
+]
+
+
+class TransportEventKind(StrEnum):
+    """Normalized connection/participant/track lifecycle (docs/06 §7-§9, §14, §18)."""
+
+    CONNECTED = "connected"
+    BROWSER_JOINED = "browser_joined"
+    MICROPHONE_READY = "microphone_ready"
+    MICROPHONE_LOST = "microphone_lost"
+    BROWSER_LEFT = "browser_left"
+    RECONNECTING = "reconnecting"
+    RECONNECTED = "reconnected"
+    RECONNECT_EXPIRED = "reconnect_expired"
+    UNEXPECTED_PARTICIPANT = "unexpected_participant"
+    EVICTED = "evicted"
+    DISCONNECTED = "disconnected"
+    END_REQUESTED = "end_requested"
+
+
+class TransportEvent(StrictModel):
+    kind: TransportEventKind
+    at_ms: Annotated[int, Field(ge=0)]
+    # Set for ``reconnect_expired``/``disconnected``: the normalized end reason.
+    reason: DisconnectReason | None = None
+    # Set for ``end_requested``: the durable termination request revision.
+    termination_request_revision: Annotated[int, Field(ge=1)] | None = None
+
+
+class TransportUsage(StrictModel):
+    """Bounded aggregate transport measurements (docs/06 §15, §22); never raw telemetry."""
+
+    connected_ms: Annotated[int, Field(ge=0)] = 0
+    reconnect_count: Annotated[int, Field(ge=0)] = 0
+    microphone_frames: Annotated[int, Field(ge=0)] = 0
+    published_frames: Annotated[int, Field(ge=0)] = 0
+    stale_frames_dropped: Annotated[int, Field(ge=0)] = 0
+    client_messages_accepted: Annotated[int, Field(ge=0)] = 0
+    client_messages_rejected: Annotated[int, Field(ge=0)] = 0
+    client_progress_dropped: Annotated[int, Field(ge=0)] = 0
+    outbound_messages_dropped: Annotated[int, Field(ge=0)] = 0

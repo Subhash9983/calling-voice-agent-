@@ -12,7 +12,13 @@ from typing import Protocol, runtime_checkable
 from voice_agent.contracts.audio import AudioFrame
 from voice_agent.contracts.events import EventEnvelope
 from voice_agent.contracts.identity import PlaybackAckIdentity
-from voice_agent.contracts.transport import ClientEvent, PlaybackFrame, RealtimeTopic
+from voice_agent.contracts.transport import (
+    ClientEvent,
+    PlaybackFrame,
+    RealtimeTopic,
+    TransportEvent,
+    TransportUsage,
+)
 
 
 @runtime_checkable
@@ -45,4 +51,30 @@ class WorkerTransportPort(Protocol):
 
     async def close(self) -> None:
         """Close idempotently."""
+        ...
+
+
+@runtime_checkable
+class SessionTransportPort(WorkerTransportPort, Protocol):
+    """Worker session transport with connection lifecycle (docs/06 §18)."""
+
+    async def connect(self) -> None:
+        """Join the assigned session with audio-only subscription (listeners first)."""
+        ...
+
+    def lifecycle_events(self) -> AsyncIterator[TransportEvent]:
+        """Normalized connection/participant/track events; ends after close."""
+        ...
+
+    async def wait_for_playout(self) -> None:
+        """Wait (bounded) until queued agent audio has been played out or cleared."""
+        ...
+
+    @property
+    def browser_present(self) -> bool:
+        """The expected browser participant is connected with the session."""
+        ...
+
+    def usage(self) -> TransportUsage:
+        """Bounded aggregate measurements so far."""
         ...

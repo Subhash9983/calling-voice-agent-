@@ -29,11 +29,13 @@ from voice_agent.control_api.access import (
 )
 from voice_agent.control_api.error_handlers import install_exception_handlers
 from voice_agent.control_api.middleware import RequestContextMiddleware
+from voice_agent.control_api.reconciler import SessionReconciler
 from voice_agent.control_api.routes import diagnostics, health, sessions
 from voice_agent.control_api.runtime import (
     ControlPlaneRuntime,
     RuntimeOverrides,
     build_runtime,
+    close_transports,
     start_persistence,
     stop_persistence,
 )
@@ -63,7 +65,7 @@ from voice_agent.security.readiness import PersistenceMode, ProcessRole
 from voice_agent.security.settings import AppEnvironment
 
 API_TITLE = "Voice agent control API"
-API_VERSION = "0.5.0"
+API_VERSION = "0.6.0"
 REQUEST_MODELS = (
     AgentConfigListParams,
     SessionCreateRequest,
@@ -108,16 +110,30 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     stop = asyncio.Event()
     outbox = runtime.event_outbox
     drain = None if outbox is None else asyncio.create_task(outbox.run(stop))
+    reconciling = _start_reconciler(runtime, stop)
     try:
         yield
     finally:
         stop.set()
+        if reconciling is not None:
+            await reconciling
         if outbox is not None and drain is not None:
             outbox.wake()
             await drain
             await outbox.drain_once()
+        await close_transports(runtime)
         await stop_persistence(runtime)
         log_event(get_logger(), logging.INFO, "control_api.stopped")
+
+
+def _start_reconciler(
+    runtime: ControlPlaneRuntime, stop: asyncio.Event
+) -> asyncio.Task[None] | None:
+    """One bounded session reconciler per process (docs/05 §21) when its stores exist."""
+    stores = runtime.stores
+    if runtime.settings is None or stores is None or stores.reconciliation is None:
+        return None
+    return asyncio.create_task(SessionReconciler(runtime).run(stop))
 
 
 def create_app(

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from voice_agent.contracts.dispatch import DispatchLocator
 from voice_agent.contracts.enums import SessionStatus
 from voice_agent.control_api.readiness import compose_startup_report, probe_readiness
 from voice_agent.control_api.runtime import in_memory_stores
@@ -174,9 +175,17 @@ async def test_timeline_event_append_is_idempotent_by_event_id() -> None:
     assert [e.envelope.sequence_number for e in events] == [1]
 
 
+_LOCATOR = DispatchLocator(
+    session_id="00000000-0000-4000-8000-000000000001",
+    correlation_id="corr",
+    agent_config_id="00000000-0000-4000-8000-000000000002",
+    environment="development",
+)
+
+
 async def test_mock_and_unavailable_transport_controls() -> None:
     mock = MockTransportControl()
-    allocation = await mock.prepare_session(session_id="s", agent_name="phase0-voice-agent")
+    allocation = await mock.prepare_session(_LOCATOR, agent_name="phase0-voice-agent")
     credential = await mock.issue_join_token(allocation, now=T0)
     await mock.release_session(allocation)
     unavailable = UnavailableTransportControl("livekit")
@@ -190,8 +199,9 @@ async def test_mock_and_unavailable_transport_controls() -> None:
     assert not unavailable.is_available
     assert unavailable.public_url == ""
     for call in (
-        unavailable.prepare_session(session_id="s", agent_name="a"),
+        unavailable.prepare_session(_LOCATOR, agent_name="a"),
         unavailable.issue_join_token(stub, now=T0),
+        unavailable.inspect_session(stub),
         unavailable.release_session(stub),
     ):
         with pytest.raises(TransportControlError):

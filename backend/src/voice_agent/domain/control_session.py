@@ -46,6 +46,18 @@ JOINABLE_STATES: frozenset[SessionStatus] = frozenset(
     {SessionStatus.CONNECTING, SessionStatus.ACTIVE, SessionStatus.ENDING}
 )
 
+# End reasons that complete as ``ended``; agent-side or infrastructure faults
+# complete as ``failed`` (docs/01 §5, docs/04 §9 bounded completion rules).
+USER_SIDE_END_REASONS: frozenset[DisconnectReason] = frozenset(
+    {
+        DisconnectReason.USER_ENDED,
+        DisconnectReason.BROWSER_CLOSED,
+        DisconnectReason.NETWORK_LOST,
+        DisconnectReason.IDLE_TIMEOUT,
+        DisconnectReason.MAXIMUM_DURATION,
+    }
+)
+
 Fingerprint = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 Revision = Annotated[int, Field(strict=True, ge=0)]
 
@@ -114,6 +126,9 @@ class TransportBinding(StrictModel):
     external_room_id: ExternalIdentifier
     external_session_id: ExternalIdentifier | None = None
     browser_participant_id: ExternalIdentifier
+    # Opaque expected agent identity (docs/06 §7, §21); optional so bindings
+    # created before WP6 (mock transport) remain valid.
+    agent_participant_id: ExternalIdentifier | None = None
 
 
 class TerminationRequest(StrictModel):
@@ -216,6 +231,10 @@ class SessionRecord(StrictModel):
     # active deadline for the current state.
     connect_deadline_at: UtcDatetime | None = None
     termination_deadline_at: UtcDatetime | None = None
+    # Store-owned and read-only here: the unreleased worker lease expiry
+    # (docs/02 §6 ``worker_assignment.lease_expires_at``). A record replace
+    # never writes it; only the lease repository does.
+    worker_lease_expires_at: UtcDatetime | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -247,6 +266,11 @@ class SessionRecord(StrictModel):
     def maximum_duration_reached(self, now: datetime) -> bool:
         return now - self.created_at >= timedelta(milliseconds=self.maximum_session_ms)
 
+    def has_live_worker(self, now: datetime) -> bool:
+        """A worker lease exists and has not expired (docs/04 §9 fast-signal rule)."""
+        expires = self.worker_lease_expires_at
+        return expires is not None and expires > now
+
     def _transition(self, target: SessionStatus, now: datetime, **update: object) -> SessionRecord:
         if target not in SESSION_TRANSITIONS[self.status]:
             raise InvalidTransitionError("session", self.status.value, target.value)
@@ -268,6 +292,23 @@ class SessionRecord(StrictModel):
             SessionStatus.FAILED,
             now,
             disconnect_reason=reason,
+            ended_at=now,
+            connect_deadline_at=None,
+            termination_deadline_at=None,
+        )
+
+    def finalize_end(self, *, now: datetime) -> SessionRecord:
+        """Complete an ``ending`` session as ``ended`` or controlled ``failed`` (docs/01 §5)."""
+        request = self.termination_request
+        if self.status is not SessionStatus.ENDING or request is None:
+            raise LifecycleStateError("only an ending session with a request can be finalized")
+        target = (
+            SessionStatus.ENDED if request.reason in USER_SIDE_END_REASONS else SessionStatus.FAILED
+        )
+        return self._transition(
+            target,
+            now,
+            disconnect_reason=request.reason,
             ended_at=now,
             connect_deadline_at=None,
             termination_deadline_at=None,

@@ -1,34 +1,31 @@
 import type { ReactElement } from "react";
+import { SessionScreen } from "./components";
 import { getPublicConfig } from "./config";
+import type { ControllerDeps } from "./session/controller";
+
+export interface AppProps {
+  /** Test seam: replaces the real API client, LiveKit transport and microphone. */
+  readonly controllerDeps?: ControllerDeps;
+}
 
 /**
- * Placeholder session shell for WP1 scaffolding. Later work packages
- * (WP6 onward) add real session state, LiveKit connection, transcript,
- * and telemetry surfaces per docs/06 and docs/14.
- *
- * WP3 adds a hard startup gate on validated public configuration
- * (docs/12-configuration-and-secrets.md §11-12): the session shell never
- * renders session controls on top of missing or malformed configuration,
+ * WP3 startup gate (docs/12-configuration-and-secrets.md §11-12): the
+ * session UI never renders on top of missing or malformed configuration,
  * and the failure surface never echoes a raw configuration value.
  */
-export function App(): ReactElement {
+export function App({ controllerDeps }: AppProps = {}): ReactElement {
   const configResult = getPublicConfig();
 
   if (!configResult.ok) {
     return (
-      <main>
+      <main className="shell">
         <h1>Voice Agent Session</h1>
-        <div role="alert">
+        <div role="alert" className="banner banner-error">
           <p>Configuration error: {configResult.error.message}</p>
         </div>
       </main>
     );
   }
 
-  return (
-    <main>
-      <h1>Voice Agent Session</h1>
-      <p>Session controls are not yet implemented.</p>
-    </main>
-  );
+  return <SessionScreen config={configResult.config} controllerDeps={controllerDeps} />;
 }

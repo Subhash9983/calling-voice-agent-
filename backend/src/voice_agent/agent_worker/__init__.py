@@ -1,4 +1,4 @@
-"""LiveKit agent worker entry point and job lifecycle.
+"""LiveKit agent worker: job admission, lease keeping, session runner, media check (WP6).
 
-Phase 0 skeleton (WP1): intentionally empty; see docs/03-backend-module-design.md.
+``python -m voice_agent.agent_worker`` runs the local worker; see ``server``.
 """

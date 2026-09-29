@@ -10,12 +10,14 @@ from datetime import datetime
 
 from pydantic import JsonValue
 
+from voice_agent.contracts.dispatch import DispatchLocator
 from voice_agent.contracts.events import EventEnvelope, EventSeverity, EventType, EventVisibility
+from voice_agent.contracts.realtime_wire import EndRequestedSignal
 from voice_agent.control_api.errors import ApiError, ErrorCode, dependency_unavailable, not_found
 from voice_agent.control_api.request_context import bind_session
 from voice_agent.control_api.runtime import ControlPlaneRuntime
 from voice_agent.control_api.structured_logging import get_logger, log_event
-from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.control_session import SessionRecord, TransportBinding
 from voice_agent.events_and_latency.lifecycle import lifecycle_event_id
 from voice_agent.ports.control_plane import EventRecord, StoreUnavailableError
 from voice_agent.ports.repositories import RevisionConflictError
@@ -125,7 +127,7 @@ def lifecycle_envelope(
 
 async def _transport_call[T](runtime: ControlPlaneRuntime, call: Awaitable[T]) -> T | None:
     with suppress(TransportControlError, TimeoutError):
-        async with asyncio.timeout(runtime.dependency_timeout_s):
+        async with asyncio.timeout(runtime.transport_timeout_s):
             return await call
     return None
 
@@ -134,9 +136,16 @@ async def prepare_transport(
     runtime: ControlPlaneRuntime, transport: TransportControl, record: SessionRecord
 ) -> TransportAllocation | None:
     settings = runtime.require_settings()
-    call = transport.prepare_session(
-        session_id=record.session_id, agent_name=settings.app_agent_name
+    # Phase 0 sessions are ``development``/``rd`` only; validation enforces it.
+    locator = DispatchLocator.model_validate(
+        {
+            "session_id": record.session_id,
+            "correlation_id": record.correlation_id,
+            "agent_config_id": record.agent_config_id,
+            "environment": record.environment.value,
+        }
     )
+    call = transport.prepare_session(locator, agent_name=settings.app_agent_name)
     return await _transport_call(runtime, call)
 
 
@@ -153,11 +162,60 @@ async def release_transport(
     """Best-effort dispatch/room cleanup; a failure is recorded separately in the log."""
     released = False
     with suppress(TransportControlError, TimeoutError):
-        async with asyncio.timeout(runtime.dependency_timeout_s):
+        async with asyncio.timeout(runtime.transport_timeout_s):
             await transport.release_session(allocation)
             released = True
     if not released:
         log_event(get_logger(), logging.WARNING, "transport.cleanup_failed", component="transport")
+
+
+def allocation_of(binding: TransportBinding) -> TransportAllocation:
+    return TransportAllocation(
+        provider=binding.provider,
+        room_name=binding.external_room_id,
+        participant_identity=binding.browser_participant_id,
+        dispatch_id=binding.external_session_id,
+        agent_identity=binding.agent_participant_id,
+    )
+
+
+async def notify_worker_end(runtime: ControlPlaneRuntime, record: SessionRecord) -> bool:
+    """Best-effort targeted ``va.control.v1`` wake-up when a live worker lease exists.
+
+    Returns whether the packet was handed to the transport. Failure is logged
+    with a safe code only; the durable ``termination_request`` stays
+    authoritative and the worker also observes it during heartbeat/reload.
+    """
+    binding, request = record.transport, record.termination_request
+    now = runtime.clock.utc_now()
+    if binding is None or request is None or binding.agent_participant_id is None:
+        return False
+    if not record.has_live_worker(now):
+        return False
+    transport = runtime.transports.get(binding.provider)
+    if transport is None or not transport.is_available:
+        return False
+    signal = EndRequestedSignal.build(
+        event_id=runtime.ids.new_id(),
+        session_id=record.session_id,
+        correlation_id=record.correlation_id,
+        occurred_at=now,
+        termination_request_revision=request.revision,
+        reason=request.reason,
+    )
+    sent = await _transport_call(
+        runtime, _notified(transport.notify_end_requested(allocation_of(binding), signal))
+    )
+    if not sent:
+        log_event(
+            get_logger(), logging.WARNING, "transport.end_signal_failed", component="transport"
+        )
+    return bool(sent)
+
+
+async def _notified(call: Awaitable[None]) -> bool:
+    await call
+    return True
 
 
 def transport_unavailable() -> ApiError:

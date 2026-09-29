@@ -1,6 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
+import { fakeDeps } from "./support/fakeDeps";
 
 describe("App", () => {
   beforeEach(() => {
@@ -14,11 +15,12 @@ describe("App", () => {
     vi.unstubAllEnvs();
   });
 
-  it("renders the session placeholder heading when configuration is valid", () => {
-    render(<App />);
+  it("renders the session heading and controls when configuration is valid", async () => {
+    render(<App controllerDeps={fakeDeps().deps} />);
 
-    const heading = screen.getByRole("heading", {
-      name: /voice agent session/i,
+    const heading = screen.getByRole("heading", { level: 1, name: /voice agent session/i });
+    await waitFor(() => {
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: /start session/i }).disabled).toBe(false);
     });
 
     expect(heading.textContent).toBe("Voice Agent Session");
@@ -28,14 +30,12 @@ describe("App", () => {
   it("renders a safe error state instead of session controls when configuration is invalid", () => {
     vi.stubEnv("VITE_APP_ENV", "production");
 
-    render(<App />);
+    render(<App controllerDeps={fakeDeps().deps} />);
 
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain(
       "VITE_APP_ENV must be one of the approved Phase 0 environment labels.",
     );
-    expect(
-      screen.queryByText(/session controls are not yet implemented/i),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /start session/i })).toBeNull();
   });
 });

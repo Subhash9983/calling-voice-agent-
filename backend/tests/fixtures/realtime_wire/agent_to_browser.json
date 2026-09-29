@@ -1,0 +1,279 @@
+[
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000001",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "listening"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "listening"
+    },
+    "name": "state_listening",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000003",
+      "event_type": "playback.started",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "speaking"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "playback.started",
+      "state": "speaking"
+    },
+    "name": "state_speaking",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000004",
+      "event_type": "playback.started",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-000000000002",
+        "state": "started",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "cancellation_generation": 0,
+      "event_type": "playback.started",
+      "segment_id": "00000000-0000-4000-8000-000000000002",
+      "state": "started",
+      "worker_generation": 1
+    },
+    "name": "playback_started",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000006",
+      "event_type": "playback.completed",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-000000000002",
+        "state": "completed",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "cancellation_generation": 0,
+      "event_type": "playback.completed",
+      "segment_id": "00000000-0000-4000-8000-000000000002",
+      "state": "completed",
+      "worker_generation": 1
+    },
+    "name": "playback_completed",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000007",
+      "event_type": "playback.completed",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "listening"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "playback.completed",
+      "state": "listening"
+    },
+    "name": "state_listening_after_playback",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000008",
+      "event_type": "transport.quality_updated",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "lease_valid_for_ms": 9000,
+        "mic_frames": 150,
+        "mic_peak": 0.25,
+        "playback_acks": {
+          "started": 1
+        },
+        "playback_bursts": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "transport.quality_updated",
+      "lease_valid_for_ms": 9000,
+      "mic_frames": 150,
+      "mic_peak": 0.25,
+      "playback_acks": {
+        "started": 1
+      },
+      "playback_bursts": 1
+    },
+    "name": "metrics",
+    "reliable": false,
+    "topic": "va.metrics.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000b1",
+      "event_type": "stt.partial",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": false,
+        "text": "hello the"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "stt.partial",
+      "is_final": false,
+      "text": "hello the"
+    },
+    "name": "transcript_partial",
+    "reliable": false,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000b2",
+      "event_type": "stt.final",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": true,
+        "text": "hello there"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "stt.final",
+      "is_final": true,
+      "text": "hello there"
+    },
+    "name": "transcript_final",
+    "reliable": true,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000b3",
+      "event_type": "conversation.completed",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": true,
+        "text": "Hi! How can I help?"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "conversation.completed",
+      "is_final": true,
+      "text": "Hi! How can I help?"
+    },
+    "name": "response_final",
+    "reliable": true,
+    "topic": "va.response.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000b4",
+      "event_type": "error.unrecoverable",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "code": "transport_error",
+        "message": "The connection was lost.",
+        "retryable": false
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "code": "transport_error",
+      "event_type": "error.unrecoverable",
+      "message": "The connection was lost.",
+      "retryable": false
+    },
+    "name": "error_transport",
+    "reliable": true,
+    "topic": "va.error.v1"
+  },
+  {
+    "direction": "server_to_agent",
+    "envelope": {
+      "correlation_id": "corr-golden",
+      "event_id": "00000000-0000-4000-8000-0000000000c1",
+      "event_type": "session.end_requested",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "payload": {
+        "reason": "user_ended",
+        "termination_request_revision": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "expected": {
+      "event_type": "session.end_requested",
+      "reason": "user_ended",
+      "termination_request_revision": 1
+    },
+    "name": "control_end_requested",
+    "reliable": true,
+    "topic": "va.control.v1"
+  }
+]

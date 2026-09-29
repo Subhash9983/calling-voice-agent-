@@ -275,6 +275,7 @@ def _transport(record: SessionRecord) -> TransportSummaryDoc:
         external_room_id=binding.external_room_id if binding else None,
         external_session_id=binding.external_session_id if binding else None,
         browser_participant_id=binding.browser_participant_id if binding else None,
+        agent_participant_id=binding.agent_participant_id if binding else None,
     )
 
 
@@ -366,6 +367,7 @@ def _binding(doc: VoiceSessionDocument) -> TransportBinding | None:
         external_room_id=transport.external_room_id,
         external_session_id=transport.external_session_id,
         browser_participant_id=transport.browser_participant_id,
+        agent_participant_id=transport.agent_participant_id,
     )
 
 
@@ -431,6 +433,7 @@ def record_from_document(doc: VoiceSessionDocument) -> SessionRecord:
         ended_at=doc.ended_at,
         connect_deadline_at=doc.connect_deadline_at,
         termination_deadline_at=doc.termination_deadline_at,
+        worker_lease_expires_at=lease_expiry_of(doc),
     )
 
 

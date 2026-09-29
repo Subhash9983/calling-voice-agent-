@@ -26,7 +26,7 @@ from voice_agent.contracts.stt import (
     SttTurnFinalized,
     SttUsage,
 )
-from voice_agent.contracts.transport import ClientReady, PlaybackAck, RealtimeTopic
+from voice_agent.contracts.transport import PlaybackAck, RealtimeTopic
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.session import VoiceSession
 from voice_agent.orchestration import delivery_flow, pipeline, turn_flow, turn_lifecycle
@@ -186,8 +186,8 @@ class SessionOrchestrator:
                 await delivery_flow.on_playback_published(rt, command)
             case ClientEventReceived(event=PlaybackAck() as ack):
                 await delivery_flow.on_playback_ack(rt, ack)
-            case ClientEventReceived(event=ClientReady()):
-                pass
+            case ClientEventReceived():
+                pass  # readiness, mic state, and latency samples are evidence only
             case LateResultDiscarded(source=source):
                 rt.count_late(source)
             case InboundAudioOverflow():

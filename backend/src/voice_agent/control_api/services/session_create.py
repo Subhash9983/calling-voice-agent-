@@ -26,6 +26,7 @@ from voice_agent.control_api.schemas.sessions import (
     TransportJoin,
 )
 from voice_agent.control_api.services.common import (
+    allocation_of,
     config_name,
     emit_session_event,
     issue_credential,
@@ -45,7 +46,6 @@ from voice_agent.domain.control_session import (
 from voice_agent.ports.control_plane import DuplicateKeyError
 from voice_agent.ports.transport_control import (
     JoinCredential,
-    TransportAllocation,
     TransportControl,
 )
 
@@ -122,15 +122,6 @@ def _new_record(
         created_at=now,
         updated_at=now,
         connect_deadline_at=_connect_deadline(config, now),
-    )
-
-
-def allocation_of(binding: TransportBinding) -> TransportAllocation:
-    return TransportAllocation(
-        provider=binding.provider,
-        room_name=binding.external_room_id,
-        participant_identity=binding.browser_participant_id,
-        dispatch_id=binding.external_session_id,
     )
 
 
@@ -259,6 +250,7 @@ async def _dispatch_and_issue(
         external_room_id=allocation.room_name,
         external_session_id=allocation.dispatch_id,
         browser_participant_id=allocation.participant_identity,
+        agent_participant_id=allocation.agent_identity,
     )
     connecting = record.bind_transport(binding, now=runtime.clock.utc_now())
     if not await try_replace(runtime, connecting, expected_revision=record.state_revision):

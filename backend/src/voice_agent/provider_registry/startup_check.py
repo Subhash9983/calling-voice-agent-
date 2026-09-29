@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from voice_agent.provider_registry.approved import check_agent_config
+from voice_agent.provider_registry.media_check_config import (
+    MEDIA_CHECK_AGENT_CONFIG_ID,
+    media_check_agent_config_document,
+)
 from voice_agent.provider_registry.mock_config import (
     MOCK_AGENT_CONFIG_ID,
     mock_agent_config_document,
@@ -40,7 +44,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def builtin_config_lookup(config_id: str) -> Mapping[str, Any] | None:
-    return mock_agent_config_document() if config_id == MOCK_AGENT_CONFIG_ID else None
+    if config_id == MOCK_AGENT_CONFIG_ID:
+        return mock_agent_config_document()
+    if config_id == MEDIA_CHECK_AGENT_CONFIG_ID:
+        return media_check_agent_config_document()
+    return None
 
 
 @dataclass(frozen=True, slots=True)

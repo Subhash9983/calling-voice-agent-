@@ -24,6 +24,13 @@ export default tseslint.config(
     },
   },
   {
+    // Vitest mocks are routinely passed to `expect(...)` as bare methods.
+    files: ["tests/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/unbound-method": "off",
+    },
+  },
+  {
     files: ["*.config.{js,ts}"],
     extends: [...tseslint.configs.recommended],
   },

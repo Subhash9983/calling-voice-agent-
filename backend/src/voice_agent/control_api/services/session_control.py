@@ -5,9 +5,9 @@ bounded retry. Join-token evidence is written by one atomic store operation
 (it never replaces the whole list, so concurrent refreshes cannot lose an
 entry). Session end records the authoritative termination request,
 moves the session to ``ending``, and emits ``session.end_requested`` once.
-Until worker leases exist (WP5/WP10) no LiveKit wake-up packet is sent; the
-durable request remains authoritative and the reconciler (a later WP)
-finalizes ``ending`` sessions.
+When a valid worker lease exists, a targeted reliable ``va.control.v1``
+wake-up is then sent best-effort; the durable request remains authoritative
+and the session reconciler finalizes ``ending`` sessions without a worker.
 """
 
 from __future__ import annotations
@@ -27,14 +27,16 @@ from voice_agent.control_api.schemas.sessions import (
 )
 from voice_agent.control_api.services.common import (
     MAX_CAS_ATTEMPTS,
+    allocation_of,
     emit_session_event,
     issue_credential,
     load_session,
+    notify_worker_end,
     revision_conflict,
     transport_unavailable,
     try_replace,
 )
-from voice_agent.control_api.services.session_create import allocation_of, transport_join
+from voice_agent.control_api.services.session_create import transport_join
 from voice_agent.domain.control_session import (
     EndDecision,
     JoinDecision,
@@ -163,5 +165,7 @@ async def end_session(
                 EventType.SESSION_END_REQUESTED,
                 payload={"reason": request.reason.value},
             )
+            if not await notify_worker_end(runtime, decision.record):
+                runtime.nudges.nudge(decision.record.session_id)
             return EndResult(data=end_session_data(decision.record), accepted=True)
     raise revision_conflict()

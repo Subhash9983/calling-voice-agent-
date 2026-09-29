@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -29,6 +30,25 @@ async def _seed(backend: Backend) -> None:
     assert {r.outcome for r in results} <= {SeedOutcome.INSERTED, SeedOutcome.PRESENT}
 
 
+async def _await_status(api: Any, session_id: str, status: str) -> Any:
+    for _attempt in range(100):
+        fetched = await api.client.get(f"{API}/sessions/{session_id}")
+        if fetched.json()["data"]["status"] == status:
+            return fetched
+        await asyncio.sleep(0.05)
+    return fetched
+
+
+async def _await_event(api: Any, session_id: str, event_type: str) -> Any:
+    """The terminal event is appended right after the status write; poll briefly."""
+    for _attempt in range(100):
+        events = await api.client.get(f"{API}/sessions/{session_id}/events")
+        if event_type in {item["event_type"] for item in events.json()["items"]}:
+            return events
+        await asyncio.sleep(0.05)
+    return events
+
+
 def _components(body: dict[str, Any]) -> dict[str, tuple[str, str]]:
     return {c["component"]: (c["status"], c["reason"]) for c in body["components"]}
 
@@ -49,17 +69,25 @@ async def test_session_lifecycle_through_mongodb(backend: Backend, api_factory: 
             f"{API}/sessions/{session_id}/end",
             json={"client_request_id": new_id(), "reason": "user_ended"},
         )
-        fetched = await api.client.get(f"{API}/sessions/{session_id}")
-        events = await api.client.get(f"{API}/sessions/{session_id}/events")
+        # No worker holds a lease, so the nudged reconciler completes the end
+        # without waiting for an end packet (docs/04 §9, docs/05 §21).
+        fetched = await _await_status(api, session_id, "ended")
+        events = await _await_event(api, session_id, "session.ended")
         listing = await api.client.get(f"{API}/sessions", params={"limit": 5})
 
     assert ready.status_code == 200, ready.text
     assert created.status_code == 201
     assert join.status_code == 200
     assert ended.status_code == 202
-    assert fetched.json()["data"]["status"] == "ending"
+    assert fetched.json()["data"]["status"] == "ended"
+    assert fetched.json()["data"]["disconnect_reason"] == "user_ended"
     types = [item["event_type"] for item in events.json()["items"]]
-    assert types == ["session.created", "session.connecting", "session.end_requested"]
+    assert types == [
+        "session.created",
+        "session.connecting",
+        "session.end_requested",
+        "session.ended",
+    ]
     sequences = [item["sequence_number"] for item in events.json()["items"]]
     assert sequences == sorted(sequences)
     assert session_id in {item["session_id"] for item in listing.json()["items"]}

@@ -28,6 +28,7 @@ from voice_agent.control_api.runtime import (
 from voice_agent.events_and_latency.clock import ManualClock, UuidIdGenerator
 from voice_agent.persistence.control_plane_memory import (
     InMemoryFeedbackRepository,
+    InMemorySessionReconciliation,
     InMemorySessionRecordRepository,
     InMemorySessionTimeline,
 )
@@ -111,6 +112,7 @@ def api_factory() -> ApiFactory:
         timeout_s: float = 2.0,
         headers: Mapping[str, str] | None = None,
         mongo: MongoPersistence | None = None,
+        reconcile: bool = False,
     ) -> AsyncIterator[Api]:
         timeline = InMemorySessionTimeline(InMemoryEventSequenceAllocator())
         session_store = sessions or InMemorySessionRecordRepository()
@@ -120,6 +122,11 @@ def api_factory() -> ApiFactory:
             feedback=feedback_store,
             timeline=timeline,
             events=events or timeline,
+            reconciliation=(
+                InMemorySessionReconciliation(session_store)
+                if reconcile and isinstance(session_store, InMemorySessionRecordRepository)
+                else None
+            ),
         )
         mock = MockTransportControl()
         clock = ManualClock()

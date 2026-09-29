@@ -30,6 +30,7 @@ from voice_agent.ports.control_plane import (
     TurnView,
 )
 from voice_agent.ports.repositories import EventSequenceAllocator, RevisionConflictError
+from voice_agent.ports.session_lifecycle import MAX_RECONCILE_BATCH, ReconcileCandidate
 
 
 class _Availability:
@@ -107,6 +108,54 @@ class InMemorySessionRecordRepository(_Availability):
         matches = [item for item in self._items.values() if _session_matches(item, query)]
         matches.sort(key=lambda item: (item.created_at, item.session_id), reverse=True)
         return matches[: query.limit]
+
+    def snapshot(self) -> tuple[SessionRecord, ...]:
+        """Current records (test/dev reconciliation scans only)."""
+        return tuple(self._items.values())
+
+
+class InMemorySessionReconciliation:
+    """``SessionReconciliationRepository`` over the in-memory session store (dev/tests)."""
+
+    def __init__(self, sessions: InMemorySessionRecordRepository) -> None:
+        self._sessions = sessions
+
+    async def list_reconcile_due(
+        self, environment: str, *, now: datetime, limit: int
+    ) -> Sequence[ReconcileCandidate]:
+        due = [
+            record
+            for record in self._sessions.snapshot()
+            if record.environment.value == environment
+            and (at := record.next_reconcile_at) is not None
+            and at <= now
+        ]
+        due.sort(key=lambda record: record.next_reconcile_at or now)
+        return [_candidate(record) for record in due[: min(limit, MAX_RECONCILE_BATCH)]]
+
+    async def list_lease_due(
+        self, environment: str, *, now: datetime, limit: int
+    ) -> Sequence[ReconcileCandidate]:
+        due = [
+            record
+            for record in self._sessions.snapshot()
+            if record.environment.value == environment
+            and not record.is_terminal
+            and (lease := record.worker_lease_expires_at) is not None
+            and lease <= now
+        ]
+        return [_candidate(record) for record in due[: min(limit, MAX_RECONCILE_BATCH)]]
+
+
+def _candidate(record: SessionRecord) -> ReconcileCandidate:
+    return ReconcileCandidate(
+        session_id=record.session_id,
+        status=record.status,
+        state_revision=record.state_revision,
+        next_reconcile_at=record.next_reconcile_at,
+        lease_expires_at=record.worker_lease_expires_at,
+        writer_epoch=None,
+    )
 
 
 def _session_matches(record: SessionRecord, query: SessionListQuery) -> bool:

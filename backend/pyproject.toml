@@ -68,6 +68,7 @@ addopts = ["-ra", "--import-mode=importlib", "--strict-markers", "--strict-confi
 markers = [
     "local_model: loads a locally bundled model file (no network)",
     "atlas: uses the real R&D MongoDB Atlas database (run with -m atlas and VOICE_AGENT_SECRETS_FILE set)",
+    "livekit: uses LiveKit Cloud, metered (run with -m livekit and VOICE_AGENT_SECRETS_FILE set)",
 ]
 filterwarnings = ["error"]
 

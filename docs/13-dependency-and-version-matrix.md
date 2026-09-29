@@ -238,6 +238,7 @@ Approved frontend candidates:
 | Package | Approved candidate |
 |---|---:|
 | `vitest` | Stable `5.x`, exact compatible lock |
+| `@vitest/coverage-v8` | `5.0.2` (WP6: dev-only coverage provider, exact-pinned to the installed `vitest` version; enforces the 80% frontend coverage threshold via `npm run test:coverage`) |
 | `@testing-library/react` | `16.3.3` |
 | `@playwright/test` | `1.63.0` |
 | `eslint` | `10.11.0` |

@@ -1,0 +1,60 @@
+[
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.exfiltrate",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {},
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "name": "unknown_event_type",
+    "reason": "unknown_event_type",
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.ready",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {},
+      "schema_version": 2,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "name": "unsupported_schema_version",
+    "reason": "unsupported_schema_version",
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "playback.progress",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-0000000000a1",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "name": "progress_without_position",
+    "reason": "invalid_message",
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.ready",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "transcript": "x"
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "name": "restricted_payload_field",
+    "reason": "invalid_message",
+    "topic": "va.client.v1"
+  }
+]

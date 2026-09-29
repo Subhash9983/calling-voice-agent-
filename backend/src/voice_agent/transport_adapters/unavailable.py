@@ -1,19 +1,24 @@
-"""Explicit not-ready transport control for providers this build cannot drive yet.
+"""Explicit not-ready transport control for providers this build cannot drive.
 
-Until the LiveKit control adapter lands (WP6), a ``livekit`` configuration is
-served by this stand-in: readiness reports the transport as unavailable and
-session creation fails safely before any durable write.
+A ``livekit`` configuration is served by this stand-in when the LiveKit
+URL/key/secret are not configured: readiness reports the transport as
+unavailable and session creation fails safely before any durable write.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
+from voice_agent.contracts.dispatch import DispatchLocator
+from voice_agent.contracts.realtime_wire import EndRequestedSignal
 from voice_agent.ports.transport_control import (
     JoinCredential,
     TransportAllocation,
     TransportControlError,
+    TransportStatus,
 )
+
+_UNAVAILABLE = "transport control unavailable"
 
 
 class UnavailableTransportControl:
@@ -32,13 +37,26 @@ class UnavailableTransportControl:
     def public_url(self) -> str:
         return ""
 
-    async def prepare_session(self, *, session_id: str, agent_name: str) -> TransportAllocation:
-        raise TransportControlError("transport control unavailable")
+    async def prepare_session(
+        self, locator: DispatchLocator, *, agent_name: str
+    ) -> TransportAllocation:
+        raise TransportControlError(_UNAVAILABLE)
 
     async def issue_join_token(
         self, allocation: TransportAllocation, *, now: datetime
     ) -> JoinCredential:
-        raise TransportControlError("transport control unavailable")
+        raise TransportControlError(_UNAVAILABLE)
+
+    async def inspect_session(self, allocation: TransportAllocation) -> TransportStatus:
+        raise TransportControlError(_UNAVAILABLE)
+
+    async def notify_end_requested(
+        self, allocation: TransportAllocation, signal: EndRequestedSignal
+    ) -> None:
+        raise TransportControlError(_UNAVAILABLE)
 
     async def release_session(self, allocation: TransportAllocation) -> None:
-        raise TransportControlError("transport control unavailable")
+        raise TransportControlError(_UNAVAILABLE)
+
+    async def aclose(self) -> None:
+        return None

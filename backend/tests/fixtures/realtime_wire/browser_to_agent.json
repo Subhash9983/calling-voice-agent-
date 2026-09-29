@@ -1,0 +1,141 @@
+[
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.ready",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {},
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "client.ready",
+    "name": "client_ready",
+    "payload": {},
+    "reliable": true,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.mic_muted",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {},
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "client.mic_muted",
+    "name": "mic_muted",
+    "payload": {},
+    "reliable": true,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "client.mic_unmuted",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {},
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "client.mic_unmuted",
+    "name": "mic_unmuted",
+    "payload": {},
+    "reliable": true,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "playback.started",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-0000000000a1",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "playback.started",
+    "name": "playback_started",
+    "payload": {
+      "cancellation_generation": 0,
+      "segment_id": "00000000-0000-4000-8000-0000000000a1",
+      "worker_generation": 1
+    },
+    "reliable": true,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "playback.progress",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "cancellation_generation": 0,
+        "position_ms": 240,
+        "segment_id": "00000000-0000-4000-8000-0000000000a1",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "playback.progress",
+    "name": "playback_progress",
+    "payload": {
+      "cancellation_generation": 0,
+      "position_ms": 240,
+      "segment_id": "00000000-0000-4000-8000-0000000000a1",
+      "worker_generation": 1
+    },
+    "reliable": false,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "playback.completed",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-0000000000a1",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "playback.completed",
+    "name": "playback_completed",
+    "payload": {
+      "cancellation_generation": 0,
+      "segment_id": "00000000-0000-4000-8000-0000000000a1",
+      "worker_generation": 1
+    },
+    "reliable": true,
+    "topic": "va.client.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-0000000000e1",
+      "event_type": "playback.failed",
+      "occurred_at": "2026-09-29T12:00:00.000Z",
+      "payload": {
+        "cancellation_generation": 0,
+        "segment_id": "00000000-0000-4000-8000-0000000000a1",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    "event_type": "playback.failed",
+    "name": "playback_failed",
+    "payload": {
+      "cancellation_generation": 0,
+      "segment_id": "00000000-0000-4000-8000-0000000000a1",
+      "worker_generation": 1
+    },
+    "reliable": true,
+    "topic": "va.client.v1"
+  }
+]
