@@ -9,15 +9,17 @@ them against the approved indexes (WP5).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from voice_agent.contracts.enums import OperationComponent, OperationStatus, SessionStatus
 from voice_agent.contracts.events import EventCategory, EventEnvelope, EventSeverity
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import JoinTokenOutcome, SessionRecord
+from voice_agent.domain.cost_entry import CostEntryRecord
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
@@ -164,6 +166,21 @@ class SessionTimelineReader(Protocol):
     async def list_operations(self, query: OperationQuery) -> Sequence[OperationView]: ...
 
     async def get_operation(self, session_id: str, operation_id: str) -> OperationView | None: ...
+
+
+@runtime_checkable
+class CostReader(Protocol):
+    """Read side of ``cost_entries`` for the control API (docs/04 §12, §14)."""
+
+    async def latest_session_run(self, session_id: str) -> Sequence[CostEntryRecord]:
+        """Lines of the latest successful (``final``) session-scope run; empty if none."""
+        ...
+
+    async def operation_costs(
+        self, session_id: str, operation_ids: Sequence[str]
+    ) -> Mapping[str, Decimal]:
+        """Normalized USD charge per operation from its latest final operation-scope run."""
+        ...
 
 
 @runtime_checkable

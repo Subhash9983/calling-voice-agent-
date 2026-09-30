@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from voice_agent.contracts.audio import AudioFrame
 from voice_agent.contracts.identity import GenerationStamp
 from voice_agent.contracts.stt import (
+    AudioWindow,
     SttEvent,
     SttFinalSegment,
     SttStreamConfig,
@@ -76,7 +77,9 @@ class MockSttAdapter:
             self._window_start_ms = frame.captured_at_ms
         self._window_end_ms = frame.ends_at_ms
 
-    async def finalize_turn(self, stamp: GenerationStamp) -> None:
+    async def finalize_turn(
+        self, stamp: GenerationStamp, window: AudioWindow | None = None
+    ) -> None:
         if stamp.turn_id is None:
             raise ValueError("finalization requires a turn")
         self._record("stt.finalize_turn")

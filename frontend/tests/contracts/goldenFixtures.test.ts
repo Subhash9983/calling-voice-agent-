@@ -9,6 +9,7 @@ import {
   type ClientEventType,
   type InboundMessage,
 } from "../../src/contracts/realtime";
+import { INITIAL_SESSION_STATE, sessionReducer } from "../../src/session/sessionState";
 import { isRecord, readRecord, readString, type JsonRecord } from "../../src/contracts/validate";
 
 /**
@@ -154,5 +155,39 @@ describe("golden fixtures: browser to agent", () => {
         expect(accepted.has(eventType)).toBe(false);
       }
     }
+  });
+});
+
+describe("golden fixtures: transcript and state through the session reducer", () => {
+  const entries = load("agent_to_browser.json").filter((entry) =>
+    ["va.transcript.v1", "va.state.v1"].includes(readString(entry, "topic", "fixture")),
+  );
+
+  function decodeAll(): readonly InboundMessage[] {
+    return entries.flatMap((entry) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(entry["envelope"]));
+      const result = decodeInbound(readString(entry, "topic", "fixture"), bytes, entry["reliable"] === true);
+      return result.ok ? [result.message] : [];
+    });
+  }
+
+  it("decodes every transcript and state fixture", () => {
+    expect(decodeAll()).toHaveLength(entries.length);
+  });
+
+  it("commits only is_final transcripts and never shows a partial as final", () => {
+    const state = decodeAll().reduce(
+      (current, message) => sessionReducer(current, { type: "message", message }),
+      INITIAL_SESSION_STATE,
+    );
+    const finals = entries.filter(
+      (entry) =>
+        readString(entry, "topic", "fixture") === "va.transcript.v1" &&
+        readRecord(entry["expected"], "expected")["is_final"] === true,
+    );
+    expect(state.userTranscript.filter((line) => line.isFinal)).toHaveLength(finals.length);
+    expect(state.userTranscript.every((line) => line.text.trim() !== "")).toBe(true);
+    const last = state.userTranscript.at(-1);
+    expect(last?.isFinal).toBe(true);
   });
 });

@@ -10,6 +10,7 @@
 import { ApiError, type ControlApiClient } from "../api";
 import { watchDeviceLoss, type MicrophoneResult } from "../audio/microphone";
 import { playbackPayload, type ClientEventInput, type ClientEventType } from "../contracts/realtime";
+import { STT_COMPONENT } from "../contracts/diagnosticsApi";
 import type { DisconnectReason, TransportJoin } from "../contracts/sessionApi";
 import type {
   ClientEventOutcome,
@@ -18,6 +19,7 @@ import type {
   TransportState,
 } from "../livekit/transport";
 import { RECONNECT_WINDOW_MS } from "../livekit/transport";
+import { summarizeCost, summarizeOperations } from "./evidence";
 import { PlaybackAckTracker } from "./playbackAcks";
 import {
   INITIAL_SESSION_STATE,
@@ -54,6 +56,7 @@ const RECOVERY_BACKOFF_MS: readonly number[] = [0, 500, 1000, 2000, 4000, 4000];
 const RETRY_DELAY_MS = 500;
 export const AGENT_SIGNAL_TIMEOUT_MS = 5000;
 const EVENTS_LIMIT = 30;
+const EVIDENCE_LIMIT = 100;
 
 function describeError(error: unknown, fallback: string): SessionError {
   if (error instanceof Error && error.name === "MicrophoneUnavailableError") {
@@ -86,6 +89,8 @@ export class VoiceSessionController {
   private recovering = false;
   private handlingLoss = false;
   private stopping = false;
+  /** The user left (page hide or End) before a session id existed. */
+  private startCancelled = false;
   private signalTimer: ReturnType<typeof setTimeout> | null = null;
   private signalLost = false;
   private readonly acks: PlaybackAckTracker;
@@ -121,6 +126,7 @@ export class VoiceSessionController {
       return;
     }
     this.stopping = false;
+    this.startCancelled = false;
     this.dispatch({ type: "starting" });
     this.dispatch({ type: "mic_requesting" });
     const mic = await this.deps.acquireMicrophone();
@@ -131,6 +137,11 @@ export class VoiceSessionController {
         message: mic.error.message,
       });
       this.dispatch({ type: "failed", error: { message: mic.error.message, retryable: true } });
+      return;
+    }
+    if (this.startCancelled) {
+      mic.track.stop();
+      this.dispatch({ type: "phase", phase: "idle" });
       return;
     }
     this.adoptMicrophone(mic.track);
@@ -201,18 +212,33 @@ export class VoiceSessionController {
         this.deps.api.createSession({ agentConfigId, clientRequestId: requestId }),
       );
       this.sessionId = created.session.sessionId;
+      if (this.startCancelled) {
+        await this.endCancelledStart(created.session.sessionId);
+        return;
+      }
       this.dispatch({
         type: "session_created",
         sessionId: created.session.sessionId,
         configuration: created.configuration,
       });
       await this.connectTransport(created.transport);
+      if (this.stopping) {
+        return;
+      }
       this.dispatch({ type: "phase", phase: "live" });
       this.noteAgentSignal();
       void this.emit("client.ready");
     } catch (error: unknown) {
       await this.abort(describeError(error, "The session could not be started."));
     }
+  }
+
+  /** The user left while the session was being created: end it without connecting. */
+  private async endCancelledStart(sessionId: string): Promise<void> {
+    await this.deps.api.endSession(sessionId, "browser_closed", this.deps.newId()).catch(() => undefined);
+    this.sessionId = null;
+    this.releaseMicrophone();
+    this.dispatch({ type: "phase", phase: "ended" });
   }
 
   private async connectTransport(join: TransportJoin): Promise<void> {
@@ -223,6 +249,9 @@ export class VoiceSessionController {
         status: null,
         retryable: false,
       });
+    }
+    if (this.stopping) {
+      return; // Never re-acquire the microphone once the user ended the session.
     }
     await this.ensureLiveMicrophone();
     this.transport ??= this.deps.createTransport(this.handlers());
@@ -279,7 +308,7 @@ export class VoiceSessionController {
     this.acks.dispose();
     this.releaseMicrophone();
     await this.transport?.disconnect().catch(() => undefined);
-    await this.loadEvents(sessionId);
+    await this.loadDiagnostics(sessionId);
     if (status === "ended") {
       this.dispatch({ type: "phase", phase: "ended" });
     } else {
@@ -301,12 +330,18 @@ export class VoiceSessionController {
 
   /** Ends the session: durable end request first, then media cleanup. */
   public async stop(reason: DisconnectReason = "user_ended"): Promise<void> {
-    if (this.stopping || this.sessionId === null) {
+    if (this.stopping) {
+      return;
+    }
+    if (this.sessionId === null) {
+      this.cancelPendingStart();
       return;
     }
     this.stopping = true;
     this.stopSignalWatch();
     this.acks.dispose();
+    // Privacy: turn the microphone off first, never after network round trips.
+    this.releaseMicrophone();
     this.dispatch({ type: "phase", phase: "ending" });
     const sessionId = this.sessionId;
     let failure: SessionError | null = null;
@@ -316,8 +351,7 @@ export class VoiceSessionController {
       failure = describeError(error, "The session could not be ended cleanly.");
     }
     await this.transport?.disconnect().catch(() => undefined);
-    this.releaseMicrophone();
-    await this.loadEvents(sessionId);
+    await this.loadDiagnostics(sessionId);
     if (failure === null) {
       this.dispatch({ type: "phase", phase: "ended" });
     } else {
@@ -325,6 +359,15 @@ export class VoiceSessionController {
     }
     this.sessionId = null;
     this.transport = null;
+  }
+
+  private cancelPendingStart(): void {
+    const starting = this.state.phase === "starting" || this.state.phase === "connecting";
+    if (!starting) {
+      return;
+    }
+    this.startCancelled = true;
+    this.releaseMicrophone();
   }
 
   public async setMuted(muted: boolean): Promise<void> {
@@ -396,8 +439,32 @@ export class VoiceSessionController {
   private releaseMicrophone(): void {
     this.stopWatching?.();
     this.stopWatching = null;
-    this.micTrack?.stop();
+    if (this.micTrack === null) {
+      return;
+    }
+    this.micTrack.stop();
     this.micTrack = null;
+    this.dispatch({ type: "mic_released" });
+  }
+
+  private async loadDiagnostics(sessionId: string): Promise<void> {
+    await Promise.all([this.loadEvents(sessionId), this.loadEvidence(sessionId)]);
+  }
+
+  /** Best-effort: any failure (including a 503 not-ready) is a neutral "not available". */
+  private async loadEvidence(sessionId: string): Promise<void> {
+    const [operations, costs] = await Promise.allSettled([
+      this.deps.api.listOperations(sessionId, { component: STT_COMPONENT, limit: EVIDENCE_LIMIT }),
+      this.deps.api.getCosts(sessionId),
+    ]);
+    this.dispatch({
+      type: "evidence_loaded",
+      evidence: {
+        status: "ready",
+        operations: operations.status === "fulfilled" ? summarizeOperations(operations.value) : null,
+        cost: costs.status === "fulfilled" ? summarizeCost(costs.value) : null,
+      },
+    });
   }
 
   private async loadEvents(sessionId: string): Promise<void> {

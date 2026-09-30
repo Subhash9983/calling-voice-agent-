@@ -97,7 +97,9 @@ async def list_errors(
 async def get_costs(
     runtime: RuntimeDep, session_id: SessionId, params: Annotated[NoQueryParameters, Query()]
 ) -> DataEnvelope[CostBreakdownView]:
-    await reads.unavailable_session_diagnostic(runtime, session_id, "Cost breakdowns")
+    return DataEnvelope(
+        data=await reads.get_cost_breakdown(runtime, session_id), request_id=current_request_id()
+    )
 
 
 @router.post(f"{_SESSION}/feedback", status_code=201, tags=["feedback"])

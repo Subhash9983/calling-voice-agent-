@@ -1,6 +1,10 @@
 """Local LiveKit agent-worker process (docs/14 §21; docs/05 §2, §21).
 
-``python -m voice_agent.agent_worker [--media-mode tone|echo]``
+``python -m voice_agent.agent_worker [--media-mode tone|echo|stt]``
+
+``stt`` (WP7) runs local Silero VAD + the Turn Manager + Deepgram streaming
+STT, with no LLM or TTS, for sessions whose approved configuration has the
+Deepgram section; the Silero model is loaded once here, before registration.
 
 Startup: validate bootstrap settings through the WP3 loader and the worker
 readiness check (MongoDB + LiveKit credentials, default configuration),
@@ -30,13 +34,22 @@ from voice_agent.agent_worker.media_check import MediaMode
 from voice_agent.control_api.structured_logging import SafeJsonFormatter
 from voice_agent.provider_registry.startup_check import StartupOutcome, run_startup_check
 from voice_agent.security.readiness import PersistenceMode, ProcessRole
+from voice_agent.speech_activity.silero import SileroModelHandle
 
 EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 HEALTH_HOST: Final = "127.0.0.1"
 HEALTH_PORT: Final = 8081
 LOAD_THRESHOLD: Final = 0.95
-SDK_LOGGERS: Final = ("livekit", "livekit.agents", "livekit.rtc", "livekit.api")
+SDK_LOGGERS: Final = (
+    "livekit",
+    "livekit.agents",
+    "livekit.rtc",
+    "livekit.api",
+    "livekit.plugins.silero",
+    "deepgram",
+    "websockets",
+)
 _CONFIG: dict[str, WorkerConfig] = {}
 
 
@@ -129,6 +142,7 @@ def main(
     environ: Mapping[str, str] | None = None,
     *,
     serve: Callable[[Any], None] = lambda server: asyncio.run(_serve(server)),
+    prewarm: Callable[[], SileroModelHandle] = SileroModelHandle.load,
 ) -> int:
     args = _parser().parse_args(argv)
     outcome = _startup(environ)
@@ -136,10 +150,15 @@ def main(
         return _refuse(outcome.report.to_safe_dict())
     settings = outcome.loaded.settings
     configure_worker_logging(settings.app_log_level)
+    mode = MediaMode(args.media_mode)
+    silero = prewarm() if mode is MediaMode.STT else None
+    if silero is not None:
+        logging.getLogger("voice_agent.agent_worker").info("worker.silero_prewarmed")
     config = WorkerConfig(
         settings=settings,
-        media_mode=MediaMode(args.media_mode),
+        media_mode=mode,
         worker_instance_id=new_worker_instance_id(),
+        silero=silero,
     )
     install_config(config)
     serve(build_server(config))

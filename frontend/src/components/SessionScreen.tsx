@@ -4,6 +4,7 @@ import type { ControllerDeps } from "../session/controller";
 import { useVoiceSession } from "../session/useVoiceSession";
 import { AudioCheckPanel } from "./AudioCheckPanel";
 import { ControlBar } from "./ControlBar";
+import { EvidencePanel } from "./EvidencePanel";
 import { EventsPanel } from "./EventsPanel";
 import { MicrophonePanel } from "./MicrophonePanel";
 import { TranscriptPanel } from "./TranscriptPanel";
@@ -102,9 +103,15 @@ export function SessionScreen({ config, controllerDeps }: SessionScreenProps): R
           )}
         </section>
 
-        <TranscriptPanel user={state.userTranscript} agent={state.agentResponse} />
+        <TranscriptPanel
+          user={state.userTranscript}
+          agent={state.agentResponse}
+          agentState={state.agentState}
+          live={state.phase === "live"}
+        />
         <AudioCheckPanel state={state} onEnableAudio={session.enableAudio} />
         <MicrophonePanel mic={state.mic} />
+        <EvidencePanel evidence={state.evidence} />
         <EventsPanel events={state.events} />
       </main>
 

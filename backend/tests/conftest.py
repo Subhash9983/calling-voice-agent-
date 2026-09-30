@@ -1,7 +1,8 @@
 """Suite-wide gating for tests that touch real R&D services.
 
-``atlas``-marked tests (the R&D MongoDB Atlas database) and ``livekit``-marked
-tests (LiveKit Cloud, metered) are skipped unless their marker is selected
+``atlas``-marked tests (the R&D MongoDB Atlas database), ``livekit``-marked
+tests (LiveKit Cloud, metered), and ``deepgram``-marked tests (Deepgram live
+STT, metered) are skipped unless their marker is selected
 explicitly with ``-m`` *and* ``VOICE_AGENT_SECRETS_FILE`` is present in the
 process environment, so a default ``pytest`` run is always offline.
 """
@@ -13,7 +14,7 @@ import os
 import pytest
 
 SECRETS_FILE_VARIABLE = "VOICE_AGENT_SECRETS_FILE"
-REAL_SERVICE_MARKERS = ("atlas", "livekit")
+REAL_SERVICE_MARKERS = ("atlas", "livekit", "deepgram")
 # pymongo 4.18.1's background server monitor can leave a connecting socket for
 # the GC when a client closes mid-connect on Windows (traced to
 # ``pymongo/asynchronous/monitor.py`` -> ``pool.py``). That is driver-internal,

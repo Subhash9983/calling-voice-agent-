@@ -7,8 +7,14 @@ join-token evidence, and fingerprints are never projected.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from decimal import Decimal
+
+from voice_agent.contracts.enums import OperationComponent
 from voice_agent.contracts.events import browser_safe_view
 from voice_agent.control_api.schemas.diagnostics import (
+    CostBreakdownView,
+    CostComponentView,
     EventItem,
     InterruptionView,
     OperationItem,
@@ -31,6 +37,7 @@ from voice_agent.control_api.schemas.sessions import (
 )
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import SessionRecord
+from voice_agent.domain.cost_entry import AggregationBehavior, CostEntryRecord
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.ports.control_plane import EventRecord, OperationView, TurnView
 from voice_agent.provider_registry.display import display_label
@@ -178,7 +185,12 @@ def event_item(record: EventRecord) -> EventItem | None:
     )
 
 
-def operation_item(view: OperationView) -> OperationItem:
+def decimal_text(value: Decimal) -> str:
+    """Plain (never scientific) decimal text for money/quantities in API output."""
+    return format(value, "f")
+
+
+def operation_item(view: OperationView, cost: Decimal | None = None) -> OperationItem:
     operation = view.operation
     failure = operation.failure
     usage = UsageView(
@@ -204,10 +216,40 @@ def operation_item(view: OperationView) -> OperationItem:
         status=operation.status,
         result_disposition=operation.result_disposition,
         usage=usage,
-        estimated_cost=None,
+        estimated_cost=None if cost is None else decimal_text(cost),
         error_type=None if failure is None else failure.error_type,
         retryable=None if failure is None else failure.retryable,
         created_at=view.created_at,
+        started_at=operation.started_at,
+        time_to_first_result_ms=operation.time_to_first_result_ms,
+        provider_duration_ms=operation.provider_duration_ms,
+        total_duration_ms=operation.total_duration_ms,
+    )
+
+
+def cost_breakdown(lines: Sequence[CostEntryRecord]) -> CostBreakdownView:
+    """Charge lines only contribute; allocation rows are never double counted."""
+    charges = [line for line in lines if line.aggregation_behavior is AggregationBehavior.CHARGE]
+    groups: dict[tuple[str, str], Decimal] = {}
+    for line in charges:
+        key = (line.component.value, line.provider_identity.provider)
+        groups[key] = groups.get(key, Decimal(0)) + line.currency_conversion.converted_net_cost
+    first = lines[0]
+    return CostBreakdownView(
+        calculation_run_id=first.calculation_run_id,
+        calculation_status=first.calculation_status,
+        total_usd=decimal_text(sum(groups.values(), Decimal(0))),
+        total_inr_display=None,
+        components=tuple(
+            CostComponentView(
+                component=OperationComponent(component),
+                label=display_label(component, provider),
+                amount_usd=decimal_text(amount),
+                retry_or_failure_related=False,
+            )
+            for (component, provider), amount in sorted(groups.items())
+        ),
+        calculated_at=first.calculated_at,
     )
 
 

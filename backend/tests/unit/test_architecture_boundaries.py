@@ -198,3 +198,44 @@ def test_orchestration_depends_on_ports_not_adapters(path: Path) -> None:
     ]
 
     assert reached == []
+
+
+# WP7 SDK placement (docs/13 §5, §7; docs/03 §4): the Deepgram SDK only in its
+# binding module; Silero/ONNX (local VAD) only in the Silero detector module.
+SDK_PLACEMENT: dict[str, frozenset[str]] = {
+    "deepgram": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
+    "websockets": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
+    "onnxruntime": frozenset({"speech_activity/silero.py"}),
+    "livekit.plugins": frozenset({"speech_activity/silero.py"}),
+}
+
+
+def _all_modules() -> list[Path]:
+    return sorted(PACKAGE_ROOT.rglob("*.py"))
+
+
+def _uses(source: str, package: str, module_package: str) -> bool:
+    return any(
+        name == package or name.startswith(f"{package}.")
+        for name in _imported_modules(source, module_package)
+    )
+
+
+@pytest.mark.parametrize(
+    "path", _all_modules(), ids=lambda p: p.relative_to(PACKAGE_ROOT).as_posix()
+)
+def test_provider_and_vad_sdks_stay_in_their_single_adapter_module(path: Path) -> None:
+    relative = path.relative_to(PACKAGE_ROOT).as_posix()
+    source = path.read_text(encoding="utf-8")
+
+    for package, allowed in SDK_PLACEMENT.items():
+        if _uses(source, package, _package_of(path)):
+            assert relative in allowed, f"{package} imported outside {sorted(allowed)}"
+
+
+def test_sdk_placement_scan_is_non_vacuous() -> None:
+    binding = (PACKAGE_ROOT / "stt_adapters/deepgram/sdk_binding.py").read_text(encoding="utf-8")
+    silero = (PACKAGE_ROOT / "speech_activity/silero.py").read_text(encoding="utf-8")
+
+    assert _uses(binding, "deepgram", "voice_agent.stt_adapters.deepgram")
+    assert _uses(silero, "livekit.plugins", "voice_agent.speech_activity")

@@ -60,6 +60,9 @@ WORKER_SERVICE: Final = "agent_worker"
 class MediaMode(StrEnum):
     TONE = "tone"
     ECHO = "echo"
+    # WP7: sessions whose approved configuration has a real STT section run the
+    # STT check (local VAD + Deepgram, no LLM/TTS); others fall back to the tone.
+    STT = "stt"
 
 
 @dataclass(frozen=True, slots=True)

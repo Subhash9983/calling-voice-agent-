@@ -9,7 +9,7 @@ successful (``final``) session-scope run, so allocations never double count.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Final
 
@@ -92,6 +92,32 @@ class MongoCostEntryStore(MongoRepository):
         latest = await self._latest(session_id, scope, target_id, final_only=True)
         return [] if latest is None else await self.list_run(latest["calculation_run_id"])
 
+    async def latest_session_run(self, session_id: str) -> Sequence[CostEntryRecord]:
+        return await self.latest_final_run(
+            session_id, scope=CostScope.SESSION, target_id=session_id
+        )
+
+    async def operation_costs(
+        self, session_id: str, operation_ids: Sequence[str]
+    ) -> Mapping[str, Decimal]:
+        """Charge per operation from each operation's latest final operation-scope run."""
+        wanted = sorted(set(operation_ids))[:MAX_RUN_LINES]
+        if not wanted:
+            return {}
+        filters: dict[str, Any] = {
+            "session_id": session_id,
+            "scope": CostScope.OPERATION.value,
+            "operation_id": {"$in": wanted},
+            "calculation_status": CalculationStatus.FINAL.value,
+        }
+        async with translate_errors():
+            rows = await (
+                self.collection(Collection.COST_ENTRIES)
+                .find(filters, limit=MAX_RUN_LINES)
+                .to_list(length=MAX_RUN_LINES)
+            )
+        return _latest_charges([parse(CostEntryRecord, row) for row in rows])
+
     async def session_charge_total(self, session_id: str) -> Decimal | None:
         lines = await self.latest_final_run(
             session_id, scope=CostScope.SESSION, target_id=session_id
@@ -133,6 +159,23 @@ class MongoCostEntryStore(MongoRepository):
             )
         if not found:
             raise ReferenceNotFoundError("cost entries require an existing session")
+
+
+def _latest_charges(lines: Sequence[CostEntryRecord]) -> dict[str, Decimal]:
+    latest: dict[str, int] = {}
+    for line in lines:
+        if line.operation_id is not None:
+            latest[line.operation_id] = max(
+                latest.get(line.operation_id, 0), line.calculation_version
+            )
+    totals: dict[str, Decimal] = {}
+    for line in lines:
+        key = line.operation_id
+        if key is None or line.calculation_version != latest[key]:
+            continue
+        if line.aggregation_behavior is AggregationBehavior.CHARGE:
+            totals[key] = totals.get(key, Decimal(0)) + line.currency_conversion.converted_net_cost
+    return totals
 
 
 def _encoded(entries: Sequence[CostEntryRecord]) -> dict[str, dict[str, Any]]:

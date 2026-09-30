@@ -10,6 +10,12 @@
  * neither the request body nor a join token is ever logged or put in a URL.
  */
 import {
+  parseCostBreakdown,
+  parseOperationList,
+  type CostBreakdown,
+  type OperationView,
+} from "../contracts/diagnosticsApi";
+import {
   parseAgentConfigList,
   parseCreateSession,
   parseEndSession,
@@ -52,6 +58,13 @@ export interface ControlApiClient {
   ): Promise<EndSessionResult>;
   getSession(sessionId: string): Promise<SessionSummary>;
   listEvents(sessionId: string, limit?: number): Promise<readonly SessionEventItem[]>;
+  /** Provider operations (docs/04 §12), optionally filtered to one component. */
+  listOperations(
+    sessionId: string,
+    options?: { readonly component?: string; readonly limit?: number },
+  ): Promise<readonly OperationView[]>;
+  /** Latest cost calculation; a 503 means "not available yet" (docs/04 §14). */
+  getCosts(sessionId: string): Promise<CostBreakdown>;
 }
 
 const defaultFetch: FetchLike = (input, init) => fetch(input, init);
@@ -128,6 +141,20 @@ export function createControlApiClient(options: ControlApiClientOptions): Contro
         undefined,
         parseEventList,
       ),
+    listOperations: (sessionId, options = {}) => {
+      const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
+      if (options.component !== undefined) {
+        query.set("component", options.component);
+      }
+      return request(
+        "GET",
+        `/sessions/${encodeURIComponent(sessionId)}/operations?${query.toString()}`,
+        undefined,
+        parseOperationList,
+      );
+    },
+    getCosts: (sessionId) =>
+      request("GET", `/sessions/${encodeURIComponent(sessionId)}/costs`, undefined, parseCostBreakdown),
   };
 }
 

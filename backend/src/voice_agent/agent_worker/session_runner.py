@@ -89,6 +89,20 @@ class WorkerStores:
 TransportFactory = Callable[[int], SessionTransportPort]
 
 
+@dataclass(frozen=True, slots=True)
+class ActivityContext:
+    """What a session activity (media check, STT check, ...) may use; nothing durable."""
+
+    transport: SessionTransportPort
+    session_id: str
+    correlation_id: str
+    worker_generation: int
+    lease_hint: Callable[[], int]
+
+
+ActivityFactory = Callable[[ActivityContext], Awaitable[None]]
+
+
 async def _attempt(awaitable: Awaitable[object]) -> bool:
     """``True`` when a bounded step completed; failures are normalized to ``False``."""
     try:
@@ -120,6 +134,7 @@ class WorkerSessionRunner:
         media_mode: MediaMode = MediaMode.TONE,
         heartbeat_s: float | None = None,
         media_timing: MediaTiming | None = None,
+        activity: ActivityFactory | None = None,
     ) -> None:
         self._stores = stores
         self._admission = admission
@@ -128,6 +143,7 @@ class WorkerSessionRunner:
         self._media_mode = media_mode
         self._heartbeat_s = heartbeat_s
         self._media_timing = media_timing or MediaTiming()
+        self._activity = activity
         self._session_id = admission.record.session_id
         self._stop: asyncio.Queue[tuple[_Stop, DisconnectReason]] = asyncio.Queue()
         self._ready = asyncio.Event()
@@ -296,6 +312,17 @@ class WorkerSessionRunner:
         return True
 
     async def _media(self, transport: SessionTransportPort, keeper: LeaseKeeper) -> None:
+        if self._activity is not None:
+            await self._activity(
+                ActivityContext(
+                    transport=transport,
+                    session_id=self._session_id,
+                    correlation_id=self._admission.record.correlation_id,
+                    worker_generation=keeper.token.generation,
+                    lease_hint=keeper.lease_valid_for_ms,
+                )
+            )
+            return
         check = MediaCheck(
             transport,
             session_id=self._session_id,

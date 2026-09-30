@@ -7,18 +7,22 @@ logical request and turn IDs. A cancelled operation's late result is
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, JsonValue, field_validator
 
-from voice_agent.contracts.base import CanonicalId, ShortLabel, StrictModel
+from voice_agent.contracts.base import CanonicalId, ShortLabel, StrictModel, UtcDatetime
 from voice_agent.contracts.enums import OperationComponent, OperationStatus, ResultDisposition
 from voice_agent.contracts.failures import NormalizedFailure
 from voice_agent.contracts.usage import UsageReport
 from voice_agent.domain.errors import DomainRuleError, InvalidTransitionError
 
+MAX_RESULT_SUMMARY_KEYS = 50
+MAX_RESULT_SUMMARY_BYTES = 8 * 1024
+DurationMs = Annotated[int, Field(ge=0)]
 _O = OperationStatus
 _TERMINAL = frozenset({_O.SUCCEEDED, _O.FAILED, _O.TIMED_OUT, _O.CANCELLED})
 # docs/02 §8 lists the states and terminal set; the non-terminal ordering
@@ -55,6 +59,24 @@ class ProviderOperation(StrictModel):
     usage: UsageReport = UsageReport.unavailable()
     failure: NormalizedFailure | None = None
     cancellation_requested: bool = False
+    # Timing/result evidence (docs/02 §8); unavailable values stay ``None``.
+    started_at: UtcDatetime | None = None
+    first_result_at: UtcDatetime | None = None
+    time_to_first_result_ms: DurationMs | None = None
+    provider_duration_ms: DurationMs | None = None
+    total_duration_ms: DurationMs | None = None
+    result_summary: dict[str, JsonValue] | None = None
+
+    @field_validator("result_summary")
+    @classmethod
+    def _bounded_summary(cls, value: dict[str, JsonValue] | None) -> dict[str, JsonValue] | None:
+        if value is None:
+            return None
+        if len(value) > MAX_RESULT_SUMMARY_KEYS:
+            raise ValueError("result_summary allows at most 50 keys")
+        if len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > MAX_RESULT_SUMMARY_BYTES:
+            raise ValueError("result_summary exceeds 8 KiB")
+        return value
 
     @property
     def is_terminal(self) -> bool:

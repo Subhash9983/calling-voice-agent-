@@ -28,10 +28,12 @@ from voice_agent.agent_worker.admission import (
 )
 from voice_agent.agent_worker.media_check import MediaMode
 from voice_agent.agent_worker.session_runner import (
+    ActivityFactory,
     RunResult,
     WorkerSessionRunner,
     WorkerStores,
 )
+from voice_agent.agent_worker.stt_session import SttSessionDeps, stt_activity, uses_real_stt
 from voice_agent.domain.agent_config import AgentConfigEnvironment
 from voice_agent.domain.worker_lease import WorkerClaim
 from voice_agent.events_and_latency.clock import SystemClock, UuidIdGenerator
@@ -47,11 +49,12 @@ from voice_agent.persistence.mongodb.repositories.worker_sessions import (
 from voice_agent.ports.transport import SessionTransportPort
 from voice_agent.ports.transport_control import TransportControl
 from voice_agent.security.settings import BootstrapSettings
+from voice_agent.speech_activity.silero import SileroModelHandle
 from voice_agent.transport_adapters.livekit.control import LiveKitTransportControl
 from voice_agent.transport_adapters.livekit.rtc_binding import RtcRoomGateway, SoxResampler
 from voice_agent.transport_adapters.livekit.session import LiveKitSessionTransport
 
-WORKER_SERVICE_VERSION: Final = "0.6.0"
+WORKER_SERVICE_VERSION: Final = "0.7.0"
 # The SDK auto-rejects a job request not answered within 7.5 s.
 ADMISSION_RETRY_S: Final = 5.0
 ADMISSION_RETRY_INTERVAL_S: Final = 0.25
@@ -79,6 +82,8 @@ class WorkerConfig:
     settings: BootstrapSettings
     media_mode: MediaMode
     worker_instance_id: str
+    # Loaded once at process start (prewarm) for ``--media-mode stt``.
+    silero: SileroModelHandle | None = None
 
 
 PersistenceFactory = Callable[[BootstrapSettings], MongoPersistence]
@@ -240,6 +245,29 @@ def transport_factory(ctx: Any, admission: JobAdmission) -> Callable[[int], Sess
     return build
 
 
+def session_activity(
+    config: WorkerConfig,
+    admission: JobAdmission,
+    persistence: MongoPersistence,
+    stores: WorkerStores,
+) -> ActivityFactory | None:
+    """The STT check for ``--media-mode stt`` with a real-STT configuration, else ``None``."""
+    if config.media_mode is not MediaMode.STT:
+        return None
+    if not uses_real_stt(admission.config) or config.silero is None:
+        _LOGGER.warning("worker.stt_mode_without_stt_configuration")
+        return None
+    deps = SttSessionDeps(
+        settings=config.settings,
+        silero=config.silero,
+        persistence=persistence,
+        events=stores.events,
+        clock=stores.clock,
+        ids=stores.ids,
+    )
+    return stt_activity(admission, deps)
+
+
 async def run_job(
     ctx: Any,
     config: WorkerConfig,
@@ -267,6 +295,7 @@ async def run_job(
             ),
             transport_factory=transport_factory(ctx, admission),
             media_mode=config.media_mode,
+            activity=session_activity(config, admission, persistence, stores),
         )
         result = await runner.run()
         _LOGGER.info("worker.job_finished", extra={"safe_fields": {"outcome": result.outcome}})

@@ -28,6 +28,10 @@ from voice_agent.provider_registry.mock_config import (
     MOCK_AGENT_CONFIG_ID,
     mock_agent_config_document,
 )
+from voice_agent.provider_registry.stt_check_config import (
+    STT_CHECK_AGENT_CONFIG_ID,
+    stt_check_agent_config_document,
+)
 from voice_agent.security.config_errors import ConfigurationError
 from voice_agent.security.config_loader import LoadedConfiguration, load_bootstrap_configuration
 from voice_agent.security.diagnostics import redacted_configuration_diagnostics
@@ -48,6 +52,8 @@ def builtin_config_lookup(config_id: str) -> Mapping[str, Any] | None:
         return mock_agent_config_document()
     if config_id == MEDIA_CHECK_AGENT_CONFIG_ID:
         return media_check_agent_config_document()
+    if config_id == STT_CHECK_AGENT_CONFIG_ID:
+        return stt_check_agent_config_document()
     return None
 
 

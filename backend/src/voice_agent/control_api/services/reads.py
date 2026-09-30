@@ -2,15 +2,16 @@
 
 Every listing requests ``limit + 1`` items to decide ``next_cursor`` and
 uses the approved cursor (newest-first timestamp/ID for sessions, sequence
-number for turns/events, timestamp/ID for operations). Error and cost
-diagnostics have no durable read model yet and return the explicit safe
-not-ready state.
+number for turns/events, timestamp/ID for operations). Error diagnostics
+have no durable read model yet and return the explicit safe not-ready state;
+costs are served from ``cost_entries`` when the store is available (WP7).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import NoReturn
 
 from voice_agent.control_api.cursors import (
@@ -24,6 +25,7 @@ from voice_agent.control_api.cursors import (
 from voice_agent.control_api.errors import dependency_unavailable, not_found
 from voice_agent.control_api.projections import (
     agent_config_view,
+    cost_breakdown,
     event_item,
     operation_item,
     session_list_item,
@@ -32,6 +34,7 @@ from voice_agent.control_api.projections import (
 )
 from voice_agent.control_api.runtime import ControlPlaneRuntime
 from voice_agent.control_api.schemas.diagnostics import (
+    CostBreakdownView,
     EventItem,
     EventListParams,
     OperationItem,
@@ -52,6 +55,7 @@ from voice_agent.ports.control_plane import EventQuery, OperationQuery, SessionL
 TURNS_CURSOR = "turns"
 EVENTS_CURSOR = "events"
 DIAGNOSTIC_NOT_AVAILABLE = "{what} are not available in this build."
+COSTS_NOT_CALCULATED = "No cost calculation is available for this session yet."
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +160,8 @@ async def list_operations(
         component=params.component,
         status=params.status,
     )
-    views = await runtime.bounded(runtime.require_stores().timeline.list_operations(query))
+    stores = runtime.require_stores()
+    views = await runtime.bounded(stores.timeline.list_operations(query))
     rows, more = _split(views, params.limit)
     last = rows[-1] if rows else None
     cursor = (
@@ -164,7 +169,26 @@ async def list_operations(
         if more and last is not None
         else None
     )
-    return Page(items=tuple(operation_item(row) for row in rows), next_cursor=cursor)
+    costs: Mapping[str, Decimal] = {}
+    if stores.costs is not None and rows:
+        ids = [row.operation.operation_id for row in rows]
+        costs = await runtime.bounded(stores.costs.operation_costs(session_id, ids))
+    items = tuple(operation_item(row, costs.get(row.operation.operation_id)) for row in rows)
+    return Page(items=items, next_cursor=cursor)
+
+
+async def get_cost_breakdown(runtime: ControlPlaneRuntime, session_id: str) -> CostBreakdownView:
+    """Latest successful session-scope calculation run (docs/04 §14)."""
+    await load_session(runtime, session_id)
+    reader = runtime.require_stores().costs
+    if reader is None:
+        raise dependency_unavailable(
+            DIAGNOSTIC_NOT_AVAILABLE.format(what="Cost breakdowns"), retryable=False
+        )
+    lines = await runtime.bounded(reader.latest_session_run(session_id))
+    if not lines:
+        raise dependency_unavailable(COSTS_NOT_CALCULATED, retryable=True)
+    return cost_breakdown(lines)
 
 
 async def unavailable_session_diagnostic(

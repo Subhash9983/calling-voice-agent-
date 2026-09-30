@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any, Final
 
 from voice_agent.agent_worker.media_check import MediaCheck
+from voice_agent.agent_worker.realtime_publisher import RealtimePublisher
 from voice_agent.contracts.audio import AudioFrame
-from voice_agent.contracts.enums import DisconnectReason
+from voice_agent.contracts.enums import AgentActivityState, DisconnectReason
 from voice_agent.contracts.events import EventEnvelope, EventType, EventVisibility
 from voice_agent.contracts.identity import PlaybackAckIdentity
 from voice_agent.contracts.realtime_wire import (
@@ -48,6 +49,8 @@ SEGMENT_ID: Final = "00000000-0000-4000-8000-0000000000a1"
 OCCURRED_AT: Final = "2026-09-29T12:00:00.000Z"
 CORRELATION_ID: Final = "corr-golden"
 ACK_FIELDS: Final = ("worker_generation", "cancellation_generation", "segment_id")
+STT_TURN_ID: Final = "00000000-0000-4000-8000-0000000000d1"
+STT_NEXT_TURN_ID: Final = "00000000-0000-4000-8000-0000000000d2"
 
 
 class _Recorder:
@@ -213,6 +216,54 @@ def _text_and_error_cases() -> list[dict[str, Any]]:
     return cases
 
 
+async def _stt_check_cases() -> list[dict[str, Any]]:
+    """Live-shaped STT-check messages from the real worker publisher (WP7).
+
+    Transcript messages carry the owning ``turn_id`` and a per-session
+    monotonic ``sequence_number``; partials are lossy, finals reliable.
+    """
+    recorder = _Recorder()
+    publisher = RealtimePublisher(
+        recorder,  # type: ignore[arg-type]
+        session_id=SESSION_ID,
+        correlation_id=CORRELATION_ID,
+        clock=ManualClock(),
+        ids=SequentialIdGenerator(start=0xD00),
+    )
+    await publisher.publish_state(AgentActivityState.LISTENING)
+    await publisher.publish_transcript("मेरा नाम", turn_id=STT_TURN_ID, is_final=False)
+    await publisher.publish_state(AgentActivityState.TRANSCRIBING)
+    await publisher.publish_transcript("मेरा नाम Arun है।", turn_id=STT_TURN_ID, is_final=True)
+    await publisher.publish_state(AgentActivityState.LISTENING)
+    await publisher.publish_transcript("My number is", turn_id=STT_NEXT_TURN_ID, is_final=False)
+    await publisher.publish_transcript(
+        "My number is 98765 43210.", turn_id=STT_NEXT_TURN_ID, is_final=True
+    )
+    await publisher.publish_error(
+        "stt_turn_failed",
+        "That turn could not be transcribed.",
+        retryable=True,
+        turn_id=STT_NEXT_TURN_ID,
+    )
+    await publisher.publish_error(
+        "stt_unavailable", "Speech recognition is unavailable.", retryable=False
+    )
+    await publisher.publish_state(AgentActivityState.ERROR)
+    names = [
+        "stt_state_listening",
+        "stt_transcript_partial_hinglish",
+        "stt_state_transcribing",
+        "stt_transcript_final_hinglish",
+        "stt_state_listening_after_final",
+        "stt_transcript_partial_next_turn",
+        "stt_transcript_final_numbers",
+        "stt_error_turn_failed",
+        "stt_error_unavailable",
+        "stt_state_error",
+    ]
+    return [_case(n, t, b, r) for n, (t, b, r) in zip(names, recorder.sent, strict=True)]
+
+
 def _control_case() -> dict[str, Any]:
     signal = EndRequestedSignal.build(
         event_id="00000000-0000-4000-8000-0000000000c1",
@@ -230,7 +281,12 @@ def _control_case() -> dict[str, Any]:
 
 
 def agent_to_browser_cases() -> list[dict[str, Any]]:
-    return [*asyncio.run(_media_check_cases()), *_text_and_error_cases(), _control_case()]
+    return [
+        *asyncio.run(_media_check_cases()),
+        *_text_and_error_cases(),
+        *asyncio.run(_stt_check_cases()),
+        _control_case(),
+    ]
 
 
 def _browser(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,10 @@ import type { ConstraintReport } from "../audio/microphone";
 import type { InboundMessage } from "../contracts/realtime";
 import type { AgentActivityState, ConfigurationLabels, SessionEventItem } from "../contracts/sessionApi";
 import type { LinkQuality, TransportState } from "../livekit/transport";
+import { NO_EVIDENCE, type EvidenceState } from "./evidence";
+import { applyTranscriptLine, type TranscriptLine } from "./transcript";
+
+export type { TranscriptLine };
 
 export type SessionPhase =
   | "idle"
@@ -19,14 +23,7 @@ export type SessionPhase =
   | "ended"
   | "failed";
 
-export type MicStatus = "idle" | "requesting" | "active" | "denied" | "lost" | "error";
-
-export interface TranscriptLine {
-  readonly id: string;
-  readonly turnId: string | null;
-  readonly text: string;
-  readonly isFinal: boolean;
-}
+export type MicStatus = "idle" | "requesting" | "active" | "released" | "denied" | "lost" | "error";
 
 export interface SessionError {
   readonly message: string;
@@ -54,7 +51,9 @@ export interface SessionViewState {
   readonly lastAgentError: string | null;
   readonly rejectedMessages: number;
   readonly lastStateSequence: number;
+  readonly lastTranscriptSequence: number;
   readonly events: readonly SessionEventItem[];
+  readonly evidence: EvidenceState;
   readonly error: SessionError | null;
 }
 
@@ -73,7 +72,9 @@ export const INITIAL_SESSION_STATE: SessionViewState = {
   lastAgentError: null,
   rejectedMessages: 0,
   lastStateSequence: -1,
+  lastTranscriptSequence: -1,
   events: [],
+  evidence: NO_EVIDENCE,
   error: null,
 };
 
@@ -90,26 +91,16 @@ export type SessionAction =
     }
   | { readonly type: "mic_failed"; readonly status: "denied" | "lost" | "error"; readonly message: string }
   | { readonly type: "mic_muted"; readonly muted: boolean }
+  | { readonly type: "mic_released" }
   | { readonly type: "agent_audio"; readonly status: AgentAudioStatus }
   | { readonly type: "agent_presence"; readonly present: boolean }
   | { readonly type: "agent_state"; readonly state: AgentActivityState | null }
   | { readonly type: "message"; readonly message: InboundMessage }
   | { readonly type: "message_rejected" }
   | { readonly type: "events_loaded"; readonly events: readonly SessionEventItem[] }
+  | { readonly type: "evidence_loaded"; readonly evidence: EvidenceState }
   | { readonly type: "failed"; readonly error: SessionError }
   | { readonly type: "reset" };
-
-const MAX_LINES = 200;
-
-function upsertLine(
-  lines: readonly TranscriptLine[],
-  incoming: TranscriptLine,
-): readonly TranscriptLine[] {
-  const last = lines.at(-1);
-  const replacesPartial = last !== undefined && !last.isFinal && last.turnId === incoming.turnId;
-  const next = replacesPartial ? [...lines.slice(0, -1), incoming] : [...lines, incoming];
-  return next.slice(-MAX_LINES);
-}
 
 function applyMessage(state: SessionViewState, message: InboundMessage): SessionViewState {
   const { envelope } = message;
@@ -125,20 +116,26 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
         lastStateSequence: sequence ?? state.lastStateSequence,
       };
     }
-    case "va.transcript.v1":
+    case "va.transcript.v1": {
+      const sequence = envelope.sequenceNumber;
+      if (sequence !== null && sequence <= state.lastTranscriptSequence) {
+        return state;
+      }
       return {
         ...state,
-        userTranscript: upsertLine(state.userTranscript, {
+        lastTranscriptSequence: sequence ?? state.lastTranscriptSequence,
+        userTranscript: applyTranscriptLine(state.userTranscript, {
           id: envelope.eventId,
           turnId: envelope.turnId,
           text: message.text,
           isFinal: message.isFinal,
         }),
       };
+    }
     case "va.response.v1":
       return {
         ...state,
-        agentResponse: upsertLine(state.agentResponse, {
+        agentResponse: applyTranscriptLine(state.agentResponse, {
           id: envelope.eventId,
           turnId: envelope.turnId,
           text: message.text,
@@ -183,6 +180,11 @@ export function sessionReducer(state: SessionViewState, action: SessionAction): 
       };
     case "mic_failed":
       return { ...state, mic: { ...state.mic, status: action.status, message: action.message } };
+    case "mic_released":
+      // The track is stopped. A failure outcome keeps its explanation.
+      return state.mic.status === "lost" || state.mic.status === "error"
+        ? state
+        : { ...state, mic: { status: "released", muted: false, report: null, message: null } };
     case "mic_muted":
       return { ...state, mic: { ...state.mic, muted: action.muted } };
     case "agent_audio":
@@ -204,6 +206,8 @@ export function sessionReducer(state: SessionViewState, action: SessionAction): 
       return { ...state, rejectedMessages: state.rejectedMessages + 1 };
     case "events_loaded":
       return { ...state, events: action.events };
+    case "evidence_loaded":
+      return { ...state, evidence: action.evidence };
     case "failed":
       return { ...state, phase: "failed", error: action.error };
     case "reset":

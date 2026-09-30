@@ -78,3 +78,15 @@ class SessionTransportPort(WorkerTransportPort, Protocol):
     def usage(self) -> TransportUsage:
         """Bounded aggregate measurements so far."""
         ...
+
+
+@runtime_checkable
+class AgentAudioActivityProbe(Protocol):
+    """Optional transport capability: agent audio is (or was just) playing (docs/06 §9).
+
+    Used only to raise the local VAD activation threshold during playback
+    (echo/self-interruption suppression); it never decides speech itself.
+    """
+
+    @property
+    def agent_audio_active(self) -> bool: ...

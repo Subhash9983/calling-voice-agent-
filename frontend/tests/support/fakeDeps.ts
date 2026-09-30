@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { ControlApiClient } from "../../src/api";
+import { ApiError, type ControlApiClient } from "../../src/api";
 import type { MicrophoneResult } from "../../src/audio/microphone";
 import type { CreateSessionResult } from "../../src/contracts/sessionApi";
 import type { TransportHandlers } from "../../src/livekit/transport";
@@ -58,6 +58,10 @@ export function fakeDeps(mic?: MicrophoneResult): FakeDeps {
     endSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", status: "ending", disconnectReason: "user_ended", idempotentReplay: false }),
     getSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", status: "active", agentActivityState: "listening", disconnectReason: null }),
     listEvents: vi.fn().mockResolvedValue([]),
+    listOperations: vi.fn().mockResolvedValue([]),
+    getCosts: vi.fn().mockRejectedValue(
+      new ApiError({ code: "DEPENDENCY_UNAVAILABLE", message: "not ready", status: 503, retryable: false }),
+    ),
   };
   const deps: ControllerDeps = {
     api,

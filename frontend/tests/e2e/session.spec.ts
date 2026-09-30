@@ -53,6 +53,18 @@ test("start against a mocked API surfaces a transport failure and ends the sessi
     }
   });
 
+  // Record every microphone track the page captures so the test can prove release.
+  await page.addInitScript(() => {
+    const tracks: MediaStreamTrack[] = [];
+    Object.assign(window, { __micTracks: tracks });
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await original(constraints);
+      tracks.push(...stream.getAudioTracks());
+      return stream;
+    };
+  });
+
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Voice Agent Session" })).toBeVisible();
   const start = page.getByRole("button", { name: "Start session" });
@@ -63,5 +75,14 @@ test("start against a mocked API surfaces a transport failure and ends the sessi
   await expect(page.getByRole("alert").first()).toContainText(/could not be established|went wrong/i);
   await expect(page.getByRole("button", { name: "Start session" })).toBeEnabled();
   expect(endCalls).toBeGreaterThan(0);
+
+  // Privacy: the real capture track is ended and the panel says so.
+  await expect(page.getByRole("region", { name: "Microphone" })).toContainText("Released (microphone off)");
+  const states = await page.evaluate(() =>
+    ((window as unknown as { __micTracks: MediaStreamTrack[] }).__micTracks).map((track) => track.readyState),
+  );
+  expect(states.length).toBeGreaterThan(0);
+  expect(states.every((state) => state === "ended")).toBe(true);
+
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain("e2e.mock.token");
 });

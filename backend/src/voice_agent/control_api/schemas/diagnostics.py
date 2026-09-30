@@ -124,10 +124,15 @@ class OperationItem(ApiModel):
     status: OperationStatus
     result_disposition: ResultDisposition
     usage: UsageView
+    # Normalized USD from the attempt's operation-scope cost run (``None`` if not priced).
     estimated_cost: str | None
     error_type: ErrorType | None
     retryable: bool | None
     created_at: datetime
+    started_at: datetime | None = None
+    time_to_first_result_ms: int | None = None
+    provider_duration_ms: int | None = None
+    total_duration_ms: int | None = None
 
 
 class ErrorItem(ApiModel):
@@ -153,7 +158,7 @@ class CostComponentView(ApiModel):
 
 
 class CostBreakdownView(ApiModel):
-    """Latest successful calculation run (docs/04 §14); served from WP11."""
+    """Latest successful session-scope calculation run (docs/04 §14; WP7 STT evidence)."""
 
     calculation_run_id: str
     calculation_status: CalculationStatus

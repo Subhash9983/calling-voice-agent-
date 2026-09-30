@@ -56,6 +56,8 @@ function setup(options: { mic?: MicrophoneResult; api?: Partial<ControlApiClient
     endSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", status: "ending", disconnectReason: "user_ended", idempotentReplay: false }),
     getSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", status: "active", agentActivityState: "listening", disconnectReason: null }),
     listEvents: vi.fn().mockResolvedValue([]),
+    listOperations: vi.fn().mockResolvedValue([]),
+    getCosts: vi.fn().mockRejectedValue(new Error("not ready")),
     ...options.api,
   };
   let counter = 0;

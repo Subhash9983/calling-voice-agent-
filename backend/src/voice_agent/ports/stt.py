@@ -12,7 +12,7 @@ from typing import Protocol, runtime_checkable
 
 from voice_agent.contracts.audio import AudioFrame
 from voice_agent.contracts.identity import GenerationStamp
-from voice_agent.contracts.stt import SttEvent, SttStreamConfig
+from voice_agent.contracts.stt import AudioWindow, SttEvent, SttStreamConfig
 
 
 @runtime_checkable
@@ -25,8 +25,15 @@ class STTPort(Protocol):
         """Accept one normalized frame stamped with the current generations."""
         ...
 
-    async def finalize_turn(self, stamp: GenerationStamp) -> None:
-        """Request finalization of ``stamp.turn_id`` (endpoint committed)."""
+    async def finalize_turn(
+        self, stamp: GenerationStamp, window: AudioWindow | None = None
+    ) -> None:
+        """Request finalization of ``stamp.turn_id`` (endpoint committed).
+
+        ``window`` is the turn's speech interval on the capture timeline;
+        segments are bound to the turn by audio-time overlap. ``None`` binds
+        every not-yet-assigned segment (single-turn adapters/tests).
+        """
         ...
 
     async def cancel_turn(self, turn_id: str) -> None:

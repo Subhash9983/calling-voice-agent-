@@ -15,11 +15,16 @@ from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.provider_registry.approved import check_agent_config
 from voice_agent.provider_registry.media_check_config import media_check_agent_config_document
 from voice_agent.provider_registry.mock_config import mock_agent_config_document
+from voice_agent.provider_registry.stt_check_config import stt_check_agent_config_document
 from voice_agent.security.settings import AppEnvironment
 
 
 def builtin_agent_config_documents() -> tuple[dict[str, Any], ...]:
-    return (mock_agent_config_document(), media_check_agent_config_document())
+    return (
+        mock_agent_config_document(),
+        media_check_agent_config_document(),
+        stt_check_agent_config_document(),
+    )
 
 
 def _approved(document: Mapping[str, Any], app_env: AppEnvironment) -> AgentConfig | None:

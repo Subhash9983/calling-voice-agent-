@@ -254,6 +254,242 @@
     "topic": "va.error.v1"
   },
   {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d00",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "listening"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "listening"
+    },
+    "name": "stt_state_listening",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d01",
+      "event_type": "stt.partial",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": false,
+        "text": "मेरा नाम"
+      },
+      "schema_version": 1,
+      "sequence_number": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000d1"
+    },
+    "expected": {
+      "event_type": "stt.partial",
+      "is_final": false,
+      "text": "मेरा नाम"
+    },
+    "name": "stt_transcript_partial_hinglish",
+    "reliable": false,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d02",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "transcribing"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "transcribing"
+    },
+    "name": "stt_state_transcribing",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d03",
+      "event_type": "stt.final",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": true,
+        "text": "मेरा नाम Arun है।"
+      },
+      "schema_version": 1,
+      "sequence_number": 2,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000d1"
+    },
+    "expected": {
+      "event_type": "stt.final",
+      "is_final": true,
+      "text": "मेरा नाम Arun है।"
+    },
+    "name": "stt_transcript_final_hinglish",
+    "reliable": true,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d04",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "listening"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "listening"
+    },
+    "name": "stt_state_listening_after_final",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d05",
+      "event_type": "stt.partial",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": false,
+        "text": "My number is"
+      },
+      "schema_version": 1,
+      "sequence_number": 3,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000d2"
+    },
+    "expected": {
+      "event_type": "stt.partial",
+      "is_final": false,
+      "text": "My number is"
+    },
+    "name": "stt_transcript_partial_next_turn",
+    "reliable": false,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d06",
+      "event_type": "stt.final",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": true,
+        "text": "My number is 98765 43210."
+      },
+      "schema_version": 1,
+      "sequence_number": 4,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000d2"
+    },
+    "expected": {
+      "event_type": "stt.final",
+      "is_final": true,
+      "text": "My number is 98765 43210."
+    },
+    "name": "stt_transcript_final_numbers",
+    "reliable": true,
+    "topic": "va.transcript.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d07",
+      "event_type": "error.retry_scheduled",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "code": "stt_turn_failed",
+        "message": "That turn could not be transcribed.",
+        "retryable": true
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000d2"
+    },
+    "expected": {
+      "code": "stt_turn_failed",
+      "event_type": "error.retry_scheduled",
+      "message": "That turn could not be transcribed.",
+      "retryable": true
+    },
+    "name": "stt_error_turn_failed",
+    "reliable": true,
+    "topic": "va.error.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d08",
+      "event_type": "error.unrecoverable",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "code": "stt_unavailable",
+        "message": "Speech recognition is unavailable.",
+        "retryable": false
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "code": "stt_unavailable",
+      "event_type": "error.unrecoverable",
+      "message": "Speech recognition is unavailable.",
+      "retryable": false
+    },
+    "name": "stt_error_unavailable",
+    "reliable": true,
+    "topic": "va.error.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000d09",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "error"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "error"
+    },
+    "name": "stt_state_error",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
     "direction": "server_to_agent",
     "envelope": {
       "correlation_id": "corr-golden",

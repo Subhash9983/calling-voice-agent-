@@ -7,6 +7,7 @@ const MIC_STATUS_TEXT: Readonly<Record<SessionViewState["mic"]["status"], string
   idle: "Not started",
   requesting: "Waiting for permission",
   active: "Capturing",
+  released: "Released (microphone off)",
   denied: "Permission denied",
   lost: "Device lost",
   error: "Unavailable",
