@@ -94,6 +94,8 @@ Source: [MongoDB Atlas Flex costs](https://www.mongodb.com/docs/atlas/billing/at
 
 WP7 live test budget (approved by the user 2026-09-30): USD 1.00 hard cap for all WP7 live Deepgram calls, at the USD 0.0092/min ceiling rate (about 108 billable minutes). Keyterm prompting stays disabled. Live samples are spoken live by the user through the browser (Hindi, Hinglish, English); no audio is stored, only transcripts, timings and usage evidence.
 
+Deepgram Model Improvement Program (user decision 2026-10-01): every live stream sends `mip_opt_out=true`, so session audio is not used for Deepgram model training. Any price difference from opting out must be confirmed from the Deepgram console/invoice and recorded here; until then the USD 0.0092/min ceiling rate remains the budget rate.
+
 The baseline cost is based on billable streaming audio evidence returned/reconciled by the provider. Until measured evidence proves that silence or paused transport is excluded, the conservative session budget treats the entire active STT stream duration as billable.
 
 The STT adapter implements and mock-tests the bounded keyterm option path, but the Phase 0 live baseline uses an empty keyterm list. Therefore no keyterm add-on is included in the baseline rate. Enabling a non-empty live list requires separate cost/configuration approval and a new comparison configuration.

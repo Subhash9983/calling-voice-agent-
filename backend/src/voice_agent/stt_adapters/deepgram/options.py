@@ -24,6 +24,9 @@ MULTILINGUAL_LANGUAGE: Final = "multi"
 AUDIO_ENCODING: Final = "linear16"
 # Keyterm prompting is a Nova-3 feature (docs/07 §6); older models use keywords.
 KEYTERM_MODELS: Final = frozenset({DEEPGRAM_MODEL})
+# User decision 2026-10-01 (docs/15): every stream opts out of Deepgram's
+# Model Improvement Program so session audio is never used for training.
+MIP_OPT_OUT: Final = True
 _EXPECTED_LANGUAGES: Final = frozenset({"hi", "en"})
 
 QueryValue = str | tuple[str, ...]
@@ -81,6 +84,7 @@ def build_stream_options(
         "interim_results": _flag(config.partial_transcripts),
         "punctuate": _flag(config.punctuation),
         "smart_format": _flag(config.smart_formatting),
+        "mip_opt_out": _flag(MIP_OPT_OUT),
     }
     keyterms = _keyterms(config, model, keyterms_approved)
     if keyterms:

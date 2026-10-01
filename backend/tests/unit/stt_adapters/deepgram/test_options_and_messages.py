@@ -46,9 +46,18 @@ def test_baseline_maps_to_nova_3_multilingual_linear16_with_no_keyterms() -> Non
         "interim_results": "true",
         "punctuate": "true",
         "smart_format": "true",
+        "mip_opt_out": "true",
     }
     assert options.keyterm_count == 0
     assert "keyterm" not in options.params
+
+
+def test_every_stream_opts_out_of_the_model_improvement_program() -> None:
+    config = SttStreamConfig(partial_transcripts=False, punctuation=False, smart_formatting=False)
+
+    params = build_stream_options(config, model=DEEPGRAM_MODEL).params
+
+    assert params["mip_opt_out"] == "true"
 
 
 def test_partials_and_formatting_follow_the_normalized_flags() -> None:
