@@ -63,6 +63,9 @@ class MediaMode(StrEnum):
     # WP7: sessions whose approved configuration has a real STT section run the
     # STT check (local VAD + Deepgram, no LLM/TTS); others fall back to the tone.
     STT = "stt"
+    # WP8: the STT check plus one GPT-6 Luna generation per accepted turn,
+    # delivered as ``va.response.v1`` text (no TTS).
+    LLM = "llm"
 
 
 @dataclass(frozen=True, slots=True)

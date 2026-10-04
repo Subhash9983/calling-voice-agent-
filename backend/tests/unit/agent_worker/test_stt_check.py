@@ -86,9 +86,9 @@ class RecordingGate(NoGenerationGate):
         super().__init__()
         self._order = order
 
-    async def authorize(self, turn: ConversationTurn) -> None:
+    async def authorize(self, turn: ConversationTurn) -> bool:
         self._order.append("authorize")
-        await super().authorize(turn)
+        return await super().authorize(turn)
 
 
 @dataclass

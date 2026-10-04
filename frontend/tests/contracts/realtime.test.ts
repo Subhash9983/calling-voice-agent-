@@ -50,6 +50,9 @@ describe("decodeInbound", () => {
       encode(envelope({ text: "hi", is_final: true })),
       true,
     );
+    expect(
+      response.ok && response.message.topic === "va.response.v1" && response.message.completionStatus,
+    ).toBeNull();
     const playback = decodeInbound("va.playback.v1", encode(envelope({ state: "started", ...IDENT })), true);
     const error = decodeInbound(
       "va.error.v1",
@@ -91,6 +94,79 @@ describe("decodeInbound", () => {
     for (const result of [missing, zeroGeneration, alias, noFinality, aliasState, noRetryable]) {
       expect(result).toEqual({ ok: false, reason: "invalid_message" });
     }
+  });
+
+  it("reads an optional response_completion_status on va.response.v1, tolerating unknown future values", () => {
+    const truncated = decodeInbound(
+      "va.response.v1",
+      encode(envelope({ text: "partial answer", is_final: true, response_completion_status: "truncated_partial" })),
+      true,
+    );
+    const unknownFutureValue = decodeInbound(
+      "va.response.v1",
+      encode(envelope({ text: "hi", is_final: true, response_completion_status: "some_future_status" })),
+      true,
+    );
+
+    expect(
+      truncated.ok && truncated.message.topic === "va.response.v1" && truncated.message.completionStatus,
+    ).toBe("truncated_partial");
+    expect(
+      unknownFutureValue.ok &&
+        unknownFutureValue.message.topic === "va.response.v1" &&
+        unknownFutureValue.message.completionStatus,
+    ).toBeNull();
+  });
+
+  it("reads an optional fallback_template_id on va.response.v1, defaulting to null when absent", () => {
+    const withTemplate = decodeInbound(
+      "va.response.v1",
+      encode(
+        envelope({
+          text: "Sorry, the response was cut short.",
+          is_final: true,
+          response_completion_status: "truncated_fallback",
+          fallback_template_id: "fallback.response_truncated.v1",
+        }),
+      ),
+      true,
+    );
+    const withoutTemplate = decodeInbound(
+      "va.response.v1",
+      encode(envelope({ text: "hi", is_final: true })),
+      true,
+    );
+
+    expect(
+      withTemplate.ok && withTemplate.message.topic === "va.response.v1" && withTemplate.message.fallbackTemplateId,
+    ).toBe("fallback.response_truncated.v1");
+    expect(
+      withoutTemplate.ok &&
+        withoutTemplate.message.topic === "va.response.v1" &&
+        withoutTemplate.message.fallbackTemplateId,
+    ).toBeNull();
+  });
+
+  it("reads an optional segment_sequence on a provisional va.response.v1 segment", () => {
+    const withSequence = decodeInbound(
+      "va.response.v1",
+      encode(envelope({ text: "Namaste", is_final: false, segment_sequence: 0 })),
+      true,
+    );
+    const withoutSequence = decodeInbound(
+      "va.response.v1",
+      encode(envelope({ text: "hi", is_final: true })),
+      true,
+    );
+
+    expect(
+      withSequence.ok && withSequence.message.topic === "va.response.v1" && withSequence.message.segmentSequence,
+    ).toBe(0);
+    expect(
+      withoutSequence.ok &&
+        withoutSequence.message.topic === "va.response.v1" &&
+        withoutSequence.message.segmentSequence,
+    ).toBeNull();
   });
 
   it("decodes the lossy metrics heartbeat", () => {

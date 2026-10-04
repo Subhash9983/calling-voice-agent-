@@ -21,6 +21,11 @@ from voice_agent.conversation_adapters.mock.adapter import (
     MOCK_CONVERSATION_PROVIDER,
 )
 from voice_agent.domain.agent_config import AgentConfig, AgentConfigStatus
+from voice_agent.provider_registry.phase0_prompt import (
+    PHASE0_PROMPT_CHECKSUM,
+    PHASE0_PROMPT_ID,
+    PHASE0_PROMPT_VERSION,
+)
 from voice_agent.security.config_errors import ConfigReason
 from voice_agent.security.readiness import AgentConfigCheck, ReadinessComponent
 from voice_agent.security.redaction import is_sensitive_key
@@ -29,7 +34,6 @@ from voice_agent.stt_adapters.mock.adapter import MOCK_STT_MODEL, MOCK_STT_PROVI
 from voice_agent.tts_adapters.mock.adapter import MOCK_TTS_MODEL, MOCK_TTS_PROVIDER
 
 MOCK_TRANSPORT_PROVIDER = "mock_transport"
-PHASE0_PROMPT_ID = "phase0_general_voice_assistant_v1"
 APPROVED_TURN_MODE = "local_vad"
 APPROVED_INTERRUPTION_MODE = "confirmed_candidate"
 # docs/02 §5 requires ``transport.credential_ref`` while docs/12 §9 makes the
@@ -82,11 +86,16 @@ _OPENAI = SectionProfile(
         "model": "gpt-6-luna",
         "max_output_tokens": 250,
         "prompt_id": PHASE0_PROMPT_ID,
+        # Only the exact approved instruction text is authoritative (docs/10 §2, §9).
+        "system_instruction_version": PHASE0_PROMPT_VERSION,
+        "prompt_checksum": PHASE0_PROMPT_CHECKSUM,
         "temperature": None,
     },
     credential_ref="env:OPENAI_API_KEY",
     options={
-        "reasoning.effort": _is("none"),
+        # Normalized path ``reasoning.effort`` stored nested (docs/08 §5); BSON keys
+        # cannot contain dots, so the flat dotted key is not storable.
+        "reasoning": _is({"effort": "none"}),
         "streaming": _is(True),
         "tools": _is("disabled"),
         "web_search": _is("disabled"),

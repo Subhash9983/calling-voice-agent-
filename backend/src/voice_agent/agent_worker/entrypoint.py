@@ -26,6 +26,7 @@ from voice_agent.agent_worker.admission import (
     RejectReason,
     admit_job,
 )
+from voice_agent.agent_worker.llm_session import LlmSessionDeps, llm_activity, uses_real_llm
 from voice_agent.agent_worker.media_check import MediaMode
 from voice_agent.agent_worker.session_runner import (
     ActivityFactory,
@@ -251,8 +252,8 @@ def session_activity(
     persistence: MongoPersistence,
     stores: WorkerStores,
 ) -> ActivityFactory | None:
-    """The STT check for ``--media-mode stt`` with a real-STT configuration, else ``None``."""
-    if config.media_mode is not MediaMode.STT:
+    """The STT (``stt``) or LLM (``llm``) check for a matching configuration, else ``None``."""
+    if config.media_mode not in (MediaMode.STT, MediaMode.LLM):
         return None
     if not uses_real_stt(admission.config) or config.silero is None:
         _LOGGER.warning("worker.stt_mode_without_stt_configuration")
@@ -265,7 +266,12 @@ def session_activity(
         clock=stores.clock,
         ids=stores.ids,
     )
-    return stt_activity(admission, deps)
+    if config.media_mode is MediaMode.STT:
+        return stt_activity(admission, deps)
+    if not uses_real_llm(admission.config):
+        _LOGGER.warning("worker.llm_mode_without_llm_configuration")
+        return None
+    return llm_activity(admission, LlmSessionDeps(stt=deps))
 
 
 async def run_job(

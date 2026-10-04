@@ -10,6 +10,11 @@ import { readArray, readRecord, readString, type JsonRecord } from "./validate";
 export const STT_COMPONENT = "stt";
 export const TRANSCRIBED_AUDIO_SECONDS = "transcribed_audio_seconds";
 
+/** Conversation-engine (LLM) component and usage units (docs/02 §9-§10). */
+export const CONVERSATION_COMPONENT = "conversation_engine";
+export const INPUT_TOKENS = "input_tokens";
+export const OUTPUT_TOKENS = "output_tokens";
+
 export interface OperationUsageItem {
   readonly unit: string;
   readonly quantity: number;

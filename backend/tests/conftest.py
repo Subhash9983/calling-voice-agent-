@@ -1,20 +1,34 @@
 """Suite-wide gating for tests that touch real R&D services.
 
 ``atlas``-marked tests (the R&D MongoDB Atlas database), ``livekit``-marked
-tests (LiveKit Cloud, metered), and ``deepgram``-marked tests (Deepgram live
-STT, metered) are skipped unless their marker is selected
-explicitly with ``-m`` *and* ``VOICE_AGENT_SECRETS_FILE`` is present in the
-process environment, so a default ``pytest`` run is always offline.
+tests (LiveKit Cloud, metered), ``deepgram``-marked tests (Deepgram live
+STT, metered), and ``openai``-marked tests (OpenAI GPT-6 Luna, metered) are
+skipped unless their marker is selected explicitly with ``-m`` *and*
+``VOICE_AGENT_SECRETS_FILE`` is present in the process environment, so a
+default ``pytest`` run is always offline.
+
+``openai`` tests additionally require ``VOICE_AGENT_OPENAI_LIVE_APPROVED=1``:
+the WP8 live budget is still PENDING in docs/15 §2.4, and an ambient
+``OPENAI_API_KEY`` user variable must never be enough to spend money.
+
+Every test that is not ``openai``-marked runs behind a guard that fails any
+HTTP request to an ``openai.com`` host, so offline runs provably make no
+OpenAI call.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from typing import Any
 
+import httpx
 import pytest
 
 SECRETS_FILE_VARIABLE = "VOICE_AGENT_SECRETS_FILE"
-REAL_SERVICE_MARKERS = ("atlas", "livekit", "deepgram")
+OPENAI_APPROVAL_VARIABLE = "VOICE_AGENT_OPENAI_LIVE_APPROVED"
+REAL_SERVICE_MARKERS = ("atlas", "livekit", "deepgram", "openai")
+BLOCKED_HOST_SUFFIX = "openai.com"
 # pymongo 4.18.1's background server monitor can leave a connecting socket for
 # the GC when a client closes mid-connect on Windows (traced to
 # ``pymongo/asynchronous/monitor.py`` -> ``pool.py``). That is driver-internal,
@@ -47,3 +61,45 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 )
             elif not configured:
                 item.add_marker(pytest.mark.skip(reason=f"{SECRETS_FILE_VARIABLE} is not set"))
+            elif marker == "openai" and os.environ.get(OPENAI_APPROVAL_VARIABLE) != "1":
+                item.add_marker(
+                    pytest.mark.skip(reason=f"{OPENAI_APPROVAL_VARIABLE}=1 is required")
+                )
+
+
+class OpenAiEgressBlockedError(RuntimeError):
+    """An offline test attempted an HTTP request to an OpenAI host."""
+
+
+def _is_openai_host(request: httpx.Request) -> bool:
+    host = request.url.host or ""
+    return host == BLOCKED_HOST_SUFFIX or host.endswith(f".{BLOCKED_HOST_SUFFIX}")
+
+
+@pytest.fixture(autouse=True)
+def openai_egress_attempts(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[list[str]]:
+    """Fail (and record) any request to an OpenAI host outside ``openai`` tests."""
+    attempts: list[str] = []
+    if request.node.get_closest_marker("openai") is not None:
+        yield attempts
+        return
+    sync_send = httpx.HTTPTransport.handle_request
+    async_send = httpx.AsyncHTTPTransport.handle_async_request
+
+    def guarded_sync(self: httpx.HTTPTransport, outgoing: httpx.Request) -> Any:
+        if _is_openai_host(outgoing):
+            attempts.append(outgoing.url.host)
+            raise OpenAiEgressBlockedError(outgoing.url.host)
+        return sync_send(self, outgoing)
+
+    async def guarded_async(self: httpx.AsyncHTTPTransport, outgoing: httpx.Request) -> Any:
+        if _is_openai_host(outgoing):
+            attempts.append(outgoing.url.host)
+            raise OpenAiEgressBlockedError(outgoing.url.host)
+        return await async_send(self, outgoing)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", guarded_sync)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", guarded_async)
+    yield attempts

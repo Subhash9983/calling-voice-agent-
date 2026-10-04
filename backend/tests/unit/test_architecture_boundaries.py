@@ -204,6 +204,8 @@ def test_orchestration_depends_on_ports_not_adapters(path: Path) -> None:
 # binding module; Silero/ONNX (local VAD) only in the Silero detector module.
 SDK_PLACEMENT: dict[str, frozenset[str]] = {
     "deepgram": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
+    # WP8: the OpenAI SDK only in the conversation adapter's binding module.
+    "openai": frozenset({"conversation_adapters/openai/sdk_binding.py"}),
     "websockets": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
     "onnxruntime": frozenset({"speech_activity/silero.py"}),
     "livekit.plugins": frozenset({"speech_activity/silero.py"}),
@@ -239,3 +241,7 @@ def test_sdk_placement_scan_is_non_vacuous() -> None:
 
     assert _uses(binding, "deepgram", "voice_agent.stt_adapters.deepgram")
     assert _uses(silero, "livekit.plugins", "voice_agent.speech_activity")
+    openai_binding = (PACKAGE_ROOT / "conversation_adapters/openai/sdk_binding.py").read_text(
+        encoding="utf-8"
+    )
+    assert _uses(openai_binding, "openai", "voice_agent.conversation_adapters.openai")

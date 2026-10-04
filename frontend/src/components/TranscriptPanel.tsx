@@ -27,6 +27,12 @@ function Lines({ lines, label, empty, provisionalLabel }: LinesProps): ReactElem
             {finals.map((line) => (
               <li key={line.id} className="line transcript-text" dir="auto">
                 {line.text}
+                {line.truncated === true && (
+                  <span className="muted truncated-note" data-testid="truncated-note">
+                    {" "}
+                    (response was cut short)
+                  </span>
+                )}
               </li>
             ))}
           </ol>

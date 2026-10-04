@@ -23,7 +23,11 @@ from typing import Any, Final
 from voice_agent.agent_worker.media_check import MediaCheck
 from voice_agent.agent_worker.realtime_publisher import RealtimePublisher
 from voice_agent.contracts.audio import AudioFrame
-from voice_agent.contracts.enums import AgentActivityState, DisconnectReason
+from voice_agent.contracts.enums import (
+    AgentActivityState,
+    DisconnectReason,
+    ResponseCompletionStatus,
+)
 from voice_agent.contracts.events import EventEnvelope, EventType, EventVisibility
 from voice_agent.contracts.identity import PlaybackAckIdentity
 from voice_agent.contracts.realtime_wire import (
@@ -51,6 +55,13 @@ CORRELATION_ID: Final = "corr-golden"
 ACK_FIELDS: Final = ("worker_generation", "cancellation_generation", "segment_id")
 STT_TURN_ID: Final = "00000000-0000-4000-8000-0000000000d1"
 STT_NEXT_TURN_ID: Final = "00000000-0000-4000-8000-0000000000d2"
+LLM_TURN_IDS: Final = tuple(
+    f"00000000-0000-4000-8000-0000000000{n}" for n in ("e3", "e4", "e5", "e6")
+)
+TRUNCATED_TEMPLATE_ID: Final = "fallback.response_truncated.v1"
+TRUNCATED_TEXT: Final = (
+    "Sorry, response पूरा generate नहीं हो पाया। Please short answer के लिए एक बार फिर पूछिए।"
+)
 
 
 class _Recorder:
@@ -264,6 +275,53 @@ async def _stt_check_cases() -> list[dict[str, Any]]:
     return [_case(n, t, b, r) for n, (t, b, r) in zip(names, recorder.sent, strict=True)]
 
 
+async def _llm_check_cases() -> list[dict[str, Any]]:
+    """Delivered-text ``va.response.v1`` messages from the real worker publisher (WP8).
+
+    Partial messages carry the cumulative *delivered* text; every final carries
+    ``response_completion_status`` (and ``fallback_template_id`` for an
+    application-owned phrase). All reliable, per-session sequence numbers.
+    """
+    recorder = _Recorder()
+    publisher = RealtimePublisher(
+        recorder,  # type: ignore[arg-type]
+        session_id=SESSION_ID,
+        correlation_id=CORRELATION_ID,
+        clock=ManualClock(),
+        ids=SequentialIdGenerator(start=0xE00),
+    )
+    done, partial, fallback, cut = LLM_TURN_IDS
+    status = ResponseCompletionStatus
+    await publisher.publish_state(AgentActivityState.THINKING)
+    await publisher.publish_response_segment("Namaste Arun!", turn_id=done, segment_sequence=0)
+    await publisher.publish_response_segment(
+        "Namaste Arun! Main aapki kya madad karun?", turn_id=done, segment_sequence=1
+    )
+    await publisher.publish_response_final(
+        "Namaste Arun! Main aapki kya madad karun?", turn_id=done, status=status.COMPLETED
+    )
+    await publisher.publish_response_final(
+        "Pehla point clear hai.", turn_id=partial, status=status.TRUNCATED_PARTIAL
+    )
+    await publisher.publish_response_final(
+        TRUNCATED_TEXT,
+        turn_id=fallback,
+        status=status.TRUNCATED_FALLBACK,
+        fallback_template_id=TRUNCATED_TEMPLATE_ID,
+    )
+    await publisher.publish_response_final("Ek second,", turn_id=cut, status=status.INTERRUPTED)
+    names = [
+        "llm_state_thinking",
+        "llm_response_partial_first_segment",
+        "llm_response_partial_second_segment",
+        "llm_response_final_completed",
+        "llm_response_final_truncated_partial",
+        "llm_response_final_truncated_fallback",
+        "llm_response_final_interrupted",
+    ]
+    return [_case(n, t, b, r) for n, (t, b, r) in zip(names, recorder.sent, strict=True)]
+
+
 def _control_case() -> dict[str, Any]:
     signal = EndRequestedSignal.build(
         event_id="00000000-0000-4000-8000-0000000000c1",
@@ -285,6 +343,7 @@ def agent_to_browser_cases() -> list[dict[str, Any]]:
         *asyncio.run(_media_check_cases()),
         *_text_and_error_cases(),
         *asyncio.run(_stt_check_cases()),
+        *asyncio.run(_llm_check_cases()),
         _control_case(),
     ]
 

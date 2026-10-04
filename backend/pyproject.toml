@@ -49,6 +49,8 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "S", "SIM", "RUF", "ASYNC", "PT", 
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+# The approved prompt text (docs/10 §2) is byte-pinned and cannot be rewrapped.
+"src/voice_agent/provider_registry/phase0_prompt.py" = ["E501"]
 
 # ---------------------------------------------------------------- mypy ----
 [tool.mypy]
@@ -70,6 +72,7 @@ markers = [
     "atlas: uses the real R&D MongoDB Atlas database (run with -m atlas and VOICE_AGENT_SECRETS_FILE set)",
     "livekit: uses LiveKit Cloud, metered (run with -m livekit and VOICE_AGENT_SECRETS_FILE set)",
     "deepgram: calls Deepgram live STT, metered (run with -m deepgram and VOICE_AGENT_SECRETS_FILE set)",
+    "openai: calls OpenAI GPT-6 Luna live, metered (run with -m openai, VOICE_AGENT_SECRETS_FILE set, and VOICE_AGENT_OPENAI_LIVE_APPROVED=1 after a docs/15 budget is recorded)",
 ]
 filterwarnings = ["error"]
 

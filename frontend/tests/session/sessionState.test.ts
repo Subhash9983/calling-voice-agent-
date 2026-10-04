@@ -48,8 +48,24 @@ describe("sessionReducer", () => {
   });
 
   it("appends a new turn after a final line", () => {
-    const first: InboundMessage = { topic: "va.response.v1", envelope: envelope({ eventId: "a" }), text: "one", isFinal: true };
-    const second: InboundMessage = { topic: "va.response.v1", envelope: envelope({ eventId: "b", turnId: "t2" }), text: "two", isFinal: false };
+    const first: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a" }),
+      text: "one",
+      isFinal: true,
+      completionStatus: "completed",
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const second: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "b", turnId: "t2" }),
+      text: "two",
+      isFinal: false,
+      completionStatus: null,
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
 
     const state = run([{ type: "message", message: first }, { type: "message", message: second }]);
 
@@ -73,6 +89,85 @@ describe("sessionReducer", () => {
 
     expect(sessionReducer(speaking, { type: "message", message: interrupted }).agentState).toBe("interrupted");
     expect(sessionReducer(speaking, { type: "message", message: cancelled }).agentState).toBe("speaking");
+  });
+
+  it("marks a delivered assistant line as truncated only for a length-limited completion", () => {
+    const normal: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a" }),
+      text: "all good",
+      isFinal: true,
+      completionStatus: "completed",
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const state = run([{ type: "message", message: normal }]);
+    expect(state.agentResponse[0]?.truncated).toBeUndefined();
+
+    const cutShort: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "b", turnId: "t2" }),
+      text: "an incomplete",
+      isFinal: true,
+      completionStatus: "truncated_partial",
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const next = run([{ type: "message", message: cutShort }]);
+    expect(next.agentResponse[0]?.truncated).toBe(true);
+  });
+
+  it("never shows a stale provisional assistant line after the generation is cancelled or interrupted", () => {
+    const partial: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a" }),
+      text: "still thin",
+      isFinal: false,
+      completionStatus: null,
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const afterPartial = run([{ type: "message", message: partial }]);
+    expect(afterPartial.agentResponse).toHaveLength(1);
+
+    const interrupted: InboundMessage = {
+      topic: "va.playback.v1",
+      envelope: envelope(),
+      state: "interrupted",
+      identity: IDENTITY,
+    };
+    const afterInterrupt = sessionReducer(afterPartial, { type: "message", message: interrupted });
+    expect(afterInterrupt.agentResponse).toHaveLength(0);
+
+    const afterCancel = sessionReducer(
+      run([{ type: "message", message: partial }]),
+      {
+        type: "message",
+        message: { topic: "va.playback.v1", envelope: envelope(), state: "cancelled", identity: IDENTITY },
+      },
+    );
+    expect(afterCancel.agentResponse).toHaveLength(0);
+  });
+
+  it("keeps an already-final assistant line when playback is later cancelled or interrupted", () => {
+    const final: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a" }),
+      text: "delivered answer",
+      isFinal: true,
+      completionStatus: "completed",
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const afterFinal = run([{ type: "message", message: final }]);
+    const interrupted: InboundMessage = {
+      topic: "va.playback.v1",
+      envelope: envelope(),
+      state: "interrupted",
+      identity: IDENTITY,
+    };
+    const state = sessionReducer(afterFinal, { type: "message", message: interrupted });
+    expect(state.agentResponse.map((line) => line.text)).toEqual(["delivered answer"]);
   });
 
   it("records agent errors and counts rejected messages", () => {

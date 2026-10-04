@@ -74,8 +74,16 @@ _LOGGER = logging.getLogger("voice_agent.agent_worker.stt")
 
 
 class GenerationGate(Protocol):
-    async def authorize(self, turn: ConversationTurn) -> None:
-        """Called only with a durably saved, accepted transcript turn."""
+    async def authorize(self, turn: ConversationTurn) -> bool:
+        """Called only with a durably saved, accepted transcript turn.
+
+        Returns ``True`` when the gate took ownership of the turn (it then
+        finalizes the turn and publishes the agent state itself).
+        """
+        ...
+
+    async def close(self) -> None:
+        """Stop any active generation and settle owned turns (idempotent)."""
         ...
 
 
@@ -85,8 +93,12 @@ class NoGenerationGate:
 
     offered: list[str] = field(default_factory=list)
 
-    async def authorize(self, turn: ConversationTurn) -> None:
+    async def authorize(self, turn: ConversationTurn) -> bool:
         self.offered.append(turn.turn_id)
+        return False
+
+    async def close(self) -> None:
+        return None
 
 
 @dataclass
@@ -392,10 +404,11 @@ class SttCheck:
             )
             await self._finish_turn()
             return
-        self._final.append(accepted)
         await self._publisher.publish_transcript(text, turn_id=accepted.turn_id, is_final=True)
-        await self.gate.authorize(accepted)
-        await self._finish_turn()
+        owned = await self.gate.authorize(accepted)
+        if not owned:
+            self._final.append(accepted)
+        await self._finish_turn(publish_listening=not owned)
 
     async def _reject(self, waiting: _Turn, disposition: InputDisposition, reason: str) -> None:
         discarded = waiting.turn.reject_input(disposition).discard()
@@ -439,10 +452,10 @@ class SttCheck:
         )
         await self._finish_turn()
 
-    async def _finish_turn(self) -> None:
+    async def _finish_turn(self, *, publish_listening: bool = True) -> None:
         if not self._awaiting and self._state.phase is TurnPhase.RESPONDING:
             self._state = agent_response_finished(self._state)
-        if self._stt_available:
+        if self._stt_available and publish_listening:
             await self._publisher.publish_state(AgentActivityState.LISTENING)
 
     # ------------------------------------------------------------ shutdown --
@@ -453,6 +466,9 @@ class SttCheck:
             async with asyncio.timeout(CLOSE_TIMEOUT_S):
                 await self._stt.close()
                 await self._consume_stt(self._stt.events())
+        with suppress(Exception):
+            async with asyncio.timeout(CLOSE_TIMEOUT_S):
+                await self.gate.close()
         pending = [w.turn for w in (self._open, *self._awaiting.values()) if w is not None]
         for turn in (*pending, *self._final):
             await self._abandon(turn)

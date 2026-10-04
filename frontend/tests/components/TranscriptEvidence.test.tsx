@@ -40,6 +40,38 @@ function sendState(fake: FakeDeps, state: "listening" | "transcribing" | "speaki
   });
 }
 
+function sendResponse(
+  fake: FakeDeps,
+  text: string,
+  isFinal: boolean,
+  completionStatus: "completed" | "truncated_partial" | "truncated_fallback" | null = isFinal ? "completed" : null,
+  turnId = "t1",
+  fallbackTemplateId: string | null = null,
+): void {
+  act(() => {
+    fake.handlers().onMessage({
+      topic: "va.response.v1",
+      envelope: envelope(turnId),
+      text,
+      isFinal,
+      completionStatus,
+      fallbackTemplateId,
+      segmentSequence: null,
+    });
+  });
+}
+
+function sendPlayback(fake: FakeDeps, state: "started" | "completed" | "cancelled" | "interrupted"): void {
+  act(() => {
+    fake.handlers().onMessage({
+      topic: "va.playback.v1",
+      envelope: envelope(null),
+      state,
+      identity: { workerGeneration: 1, cancellationGeneration: 0, segmentId: "seg-1" },
+    });
+  });
+}
+
 function indicator(): HTMLElement {
   const conversation = screen.getByRole("region", { name: "Conversation" });
   const found = conversation.querySelector<HTMLElement>(".listening");
@@ -100,6 +132,54 @@ describe("transcript panel", () => {
     sendTranscript(fake, "", false);
     expect(screen.queryByTestId("provisional-line")).toBeNull();
     expect(screen.getByRole("log", { name: "Your transcript" }).querySelector("li")).toBeNull();
+  });
+
+  it("shows streamed assistant text as provisional, then commits the delivered final", async () => {
+    const fake = await live();
+    const log = screen.getByRole("log", { name: "Agent response" });
+
+    sendResponse(fake, "I think the", false, null);
+    expect(screen.getByTestId("provisional-line").textContent).toContain("I think the");
+    expect(within(log).queryByText("I think the")).toBeNull();
+
+    sendResponse(fake, "I think the answer is 4.", true, "completed");
+    expect(screen.queryByTestId("provisional-line")).toBeNull();
+    expect(within(log).getByText("I think the answer is 4.")).toBeDefined();
+  });
+
+  it("never shows a stale provisional assistant line once its generation is interrupted", async () => {
+    const fake = await live();
+    sendResponse(fake, "still generat", false, null);
+    expect(screen.getByTestId("provisional-line")).toBeDefined();
+
+    sendPlayback(fake, "interrupted");
+
+    expect(screen.queryByTestId("provisional-line")).toBeNull();
+    expect(screen.queryByText(/still generat/)).toBeNull();
+  });
+
+  it("never shows a stale provisional assistant line once its generation is cancelled", async () => {
+    const fake = await live();
+    sendResponse(fake, "mid stream", false, null);
+
+    sendPlayback(fake, "cancelled");
+
+    expect(screen.queryByTestId("provisional-line")).toBeNull();
+  });
+
+  it("shows a neutral cut-short note for a delivered-but-truncated response, never a fabricated closure", async () => {
+    const fake = await live();
+    sendResponse(fake, "Here is a partial answer", true, "truncated_partial");
+
+    const log = screen.getByRole("log", { name: "Agent response" });
+    expect(within(log).getByText("Here is a partial answer")).toBeDefined();
+    expect(screen.getByTestId("truncated-note").textContent).toContain("cut short");
+  });
+
+  it("does not show a cut-short note for a normal complete response", async () => {
+    const fake = await live();
+    sendResponse(fake, "A complete answer.", true, "completed");
+    expect(screen.queryByTestId("truncated-note")).toBeNull();
   });
 
   it("drives the listening indicator from the canonical state", async () => {
@@ -187,5 +267,60 @@ describe("speech recognition summary", () => {
     expect(within(panel).queryByRole("alert")).toBeNull();
     expect(screen.queryByText(/something went wrong/i)).toBeNull();
     expect(fake.api.getCosts).toHaveBeenCalled();
+  });
+});
+
+describe("conversation engine summary", () => {
+  it("is neutral before the session ends", async () => {
+    await live();
+    const panel = screen.getByRole("region", { name: "Conversation engine summary" });
+    expect(panel.textContent).toContain("Shown after the session ends");
+  });
+
+  it("shows operation count, token usage and cost after the session ends", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.listOperations).mockImplementation((_sessionId, options) => {
+      if (options?.component === "conversation_engine") {
+        return Promise.resolve([
+          {
+            operationId: "o2",
+            component: "conversation_engine",
+            provider: "openai",
+            status: "succeeded",
+            usage: [
+              { unit: "input_tokens", quantity: 120 },
+              { unit: "output_tokens", quantity: 45 },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    vi.mocked(fake.api.getCosts).mockResolvedValue({
+      calculationStatus: "final",
+      totalUsd: "0.02",
+      components: [{ component: "conversation_engine", label: "OpenAI", amountUsd: "0.0120" }],
+    });
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Conversation engine summary" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("$0.0120 (final)");
+    });
+    expect(within(panel).getByText("Conversation operations").nextElementSibling?.textContent).toBe("1");
+    expect(within(panel).getByText("Input tokens").nextElementSibling?.textContent).toBe("120");
+    expect(within(panel).getByText("Output tokens").nextElementSibling?.textContent).toBe("45");
+  });
+
+  it("shows a neutral not-available state when no conversation operations have been recorded yet", async () => {
+    await live();
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Conversation engine summary" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("Not available yet");
+    });
+    expect(within(panel).queryByRole("alert")).toBeNull();
   });
 });

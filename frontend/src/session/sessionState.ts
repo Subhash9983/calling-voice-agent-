@@ -9,7 +9,7 @@ import type { InboundMessage } from "../contracts/realtime";
 import type { AgentActivityState, ConfigurationLabels, SessionEventItem } from "../contracts/sessionApi";
 import type { LinkQuality, TransportState } from "../livekit/transport";
 import { NO_EVIDENCE, type EvidenceState } from "./evidence";
-import { applyTranscriptLine, type TranscriptLine } from "./transcript";
+import { applyTranscriptLine, dropProvisionalLine, type TranscriptLine } from "./transcript";
 
 export type { TranscriptLine };
 
@@ -132,7 +132,9 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
         }),
       };
     }
-    case "va.response.v1":
+    case "va.response.v1": {
+      const truncated =
+        message.completionStatus === "truncated_partial" || message.completionStatus === "truncated_fallback";
       return {
         ...state,
         agentResponse: applyTranscriptLine(state.agentResponse, {
@@ -140,14 +142,22 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
           turnId: envelope.turnId,
           text: message.text,
           isFinal: message.isFinal,
+          ...(truncated ? { truncated: true } : {}),
         }),
       };
+    }
     case "va.error.v1":
       return { ...state, lastAgentError: message.message };
     case "va.playback.v1":
-      // A cancelled or interrupted playback never leaves a stale "speaking" state.
+      // A cancelled or interrupted playback never leaves a stale "speaking"
+      // state, and a still-streaming assistant line from that generation
+      // must not linger as if it were still in progress (docs/08 §13).
       return message.state === "cancelled" || message.state === "interrupted"
-        ? { ...state, agentState: message.state === "interrupted" ? "interrupted" : state.agentState }
+        ? {
+            ...state,
+            agentState: message.state === "interrupted" ? "interrupted" : state.agentState,
+            agentResponse: dropProvisionalLine(state.agentResponse),
+          }
         : state;
     case "va.metrics.v1":
       return state;

@@ -21,7 +21,7 @@ from pydantic import SecretStr
 from voice_agent.agent_worker.admission import JobAdmission
 from voice_agent.agent_worker.realtime_publisher import RealtimePublisher
 from voice_agent.agent_worker.session_runner import ActivityContext, ActivityFactory
-from voice_agent.agent_worker.stt_check import SttCheck, SttCheckSetup
+from voice_agent.agent_worker.stt_check import GenerationGate, SttCheck, SttCheckSetup
 from voice_agent.agent_worker.stt_evidence import CostRunWriter, EvidenceContext, SttEvidence
 from voice_agent.contracts.cost import RateCard
 from voice_agent.contracts.enums import OperationComponent
@@ -114,7 +114,10 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
         correlation_id=record.correlation_id,
         agent_config_id=record.agent_config_id,
         environment=record.environment,
-        adapter_versions={OperationComponent.STT: config.stt.adapter_version},
+        adapter_versions={
+            OperationComponent.STT: config.stt.adapter_version,
+            OperationComponent.CONVERSATION_ENGINE: config.conversation_engine.adapter_version,
+        },
     )
     card = rate_card_for(config)
     costs: CostRunWriter | None = None if card is None else MongoCostEntryStore(deps.persistence)
@@ -138,9 +141,17 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
     )
 
 
+GateFactory = Callable[[SttEvidence, RealtimePublisher], GenerationGate]
+
+
 def build_stt_check(
-    context: ActivityContext, admission: JobAdmission, deps: SttSessionDeps
+    context: ActivityContext,
+    admission: JobAdmission,
+    deps: SttSessionDeps,
+    *,
+    gate_factory: GateFactory | None = None,
 ) -> SttCheck:
+    """The STT check; ``gate_factory`` adds a generation gate sharing its evidence/publisher."""
     config = admission.config
     credential_ref = config.stt.credential_ref
     if credential_ref is None:  # pragma: no cover - rejected by the approved profile
@@ -158,6 +169,14 @@ def build_stt_check(
         retry=config.retry_policy,
         retry_delay_ms=jittered_backoff(config.retry_policy),
     )
+    evidence = _evidence(deps, admission, context.worker_generation)
+    publisher = RealtimePublisher(
+        context.transport,
+        session_id=context.session_id,
+        correlation_id=context.correlation_id,
+        clock=deps.clock,
+        ids=deps.ids,
+    )
     return SttCheck(
         context.transport,
         SttCheckSetup(
@@ -169,16 +188,11 @@ def build_stt_check(
         ),
         stt=stt,
         detector=SileroSpeechActivityDetector(deps.silero.new_model(), policy),
-        evidence=_evidence(deps, admission, context.worker_generation),
-        publisher=RealtimePublisher(
-            context.transport,
-            session_id=context.session_id,
-            correlation_id=context.correlation_id,
-            clock=deps.clock,
-            ids=deps.ids,
-        ),
+        evidence=evidence,
+        publisher=publisher,
         clock=deps.clock,
         ids=deps.ids,
+        gate=None if gate_factory is None else gate_factory(evidence, publisher),
     )
 
 

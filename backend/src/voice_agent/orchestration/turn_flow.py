@@ -35,6 +35,7 @@ from voice_agent.orchestration.commands import (
     SegmentQueued,
     SegmentRejected,
 )
+from voice_agent.orchestration.history_budget import budget_history
 from voice_agent.orchestration.pipeline import guard, produce_response
 from voice_agent.orchestration.state import (
     ActiveTurnState,
@@ -66,8 +67,8 @@ from voice_agent.turn_management.fallbacks import (
 def bounded_history(history: list[HistoryMessage]) -> tuple[HistoryMessage, ...]:
     """Keep the newest messages within the contract bound, starting on a user message.
 
-    Token-budget truncation (12,000-token history target) belongs to the WP8
-    adapter work; this only guarantees the request contract bound.
+    The token budget (docs/08 §8) is applied on top by
+    :func:`voice_agent.orchestration.history_budget.budget_history`.
     """
     recent = history[-MAX_HISTORY_MESSAGES:]
     while recent and recent[0].role is not HistoryRole.USER:
@@ -167,7 +168,11 @@ async def start_response(rt: SessionRuntime, active: ActiveTurnState) -> None:
         system_instruction_version=profile.system_instruction_version,
         system_instruction=profile.system_instruction,
         user_transcript=turn.final_transcript or "",
-        history=bounded_history(rt.history),
+        history=budget_history(
+            bounded_history(rt.history),
+            system_instruction=profile.system_instruction,
+            user_transcript=turn.final_transcript or "",
+        ).messages,
         language=turn.language,
         max_output_tokens=profile.max_output_tokens,
     )

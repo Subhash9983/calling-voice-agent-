@@ -50,8 +50,20 @@ function decodedView(message: InboundMessage): Record<string, unknown> {
         segment_id: message.identity.segmentId,
       };
     case "va.transcript.v1":
-    case "va.response.v1":
       return { event_type: eventType, text: message.text, is_final: message.isFinal };
+    case "va.response.v1":
+      return {
+        event_type: eventType,
+        text: message.text,
+        is_final: message.isFinal,
+        ...(message.completionStatus === null
+          ? {}
+          : { response_completion_status: message.completionStatus }),
+        ...(message.fallbackTemplateId === null
+          ? {}
+          : { fallback_template_id: message.fallbackTemplateId }),
+        ...(message.segmentSequence === null ? {} : { segment_sequence: message.segmentSequence }),
+      };
     case "va.error.v1":
       return {
         event_type: eventType,

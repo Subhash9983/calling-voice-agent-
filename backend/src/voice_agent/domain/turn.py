@@ -162,6 +162,10 @@ class ConversationTurn(StrictModel):
         joined = f"{self.spoken_text} {text}".strip()
         return self._update(spoken_text=joined, spoken_text_accuracy=accuracy)
 
+    def record_fallback(self) -> ConversationTurn:
+        """An application-owned fallback phrase was delivered for this turn (docs/10 §5)."""
+        return self._update(fallback_used=True)
+
     def record_finish_reason(self, reason: FinishReason) -> ConversationTurn:
         return self._update(response_finish_reason=reason)
 

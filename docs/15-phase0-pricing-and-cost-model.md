@@ -115,6 +115,8 @@ Approved API path: Responses API, Standard processing, short-context rates, no r
 | Cache write | 0.125 |
 | Output | 0.50 |
 
+WP8 live test budget (approved by the user 2026-10-04): USD 0.25 hard cap for all WP8 live OpenAI GPT-6 Luna calls, at the docs/15 §2.4 formula rate (reasoning.effort=none, no cache discount assumed). Covers the automated `-m openai` tests plus a real multi-turn Hindi/Hinglish/English browser session via the `llm_check` agent config, including at least one adversarial prompt-disclosure attempt. OPENAI_API_KEY is read only from the external secrets file.
+
 The baseline budget does not assume a cache discount. Reasoning effort is `none`; tool calls, web search, files, hosted containers, audio models, and regional/Fast processing are disabled and excluded.
 
 For each attempt:

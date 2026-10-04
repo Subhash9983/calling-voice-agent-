@@ -55,6 +55,22 @@ export interface Envelope {
   readonly payload: JsonRecord;
 }
 
+/**
+ * Normalized `response_completion_status` (docs/01 §7, docs/02 §10, docs/08
+ * §12). Additive on `va.response.v1`: absent on current fixtures, and an
+ * unrecognized future value is tolerated as `null` rather than rejecting the
+ * whole message (docs/06 §11 "unknown field ... ignored safely").
+ */
+export const RESPONSE_COMPLETION_STATUSES = [
+  "not_started",
+  "completed",
+  "truncated_partial",
+  "truncated_fallback",
+  "interrupted",
+  "failed",
+] as const;
+export type ResponseCompletionStatus = (typeof RESPONSE_COMPLETION_STATUSES)[number];
+
 export type InboundMessage =
   | { readonly topic: "va.state.v1"; readonly envelope: Envelope; readonly state: AgentActivityState }
   | {
@@ -68,6 +84,18 @@ export type InboundMessage =
       readonly envelope: Envelope;
       readonly text: string;
       readonly isFinal: boolean;
+      readonly completionStatus: ResponseCompletionStatus | null;
+      /**
+       * Set only for the deterministic `fallback.response_truncated.v1`
+       * delivery (docs/10 §9): the approved template ID, never free text.
+       */
+      readonly fallbackTemplateId: string | null;
+      /**
+       * Present on a provisional `conversation.segment_ready` delivery
+       * (docs/08 §11 "attach segment sequence and cancellation
+       * generation"); null when absent (e.g. the final response event).
+       */
+      readonly segmentSequence: number | null;
     }
   | {
       readonly topic: "va.playback.v1";
@@ -153,6 +181,24 @@ function readIdentity(payload: JsonRecord): PlaybackAckIdentity {
   };
 }
 
+function readOptionalNonNegativeInteger(payload: JsonRecord, key: string): number | null {
+  const value = payload[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
+
+function readToleratedCompletionStatus(payload: JsonRecord): ResponseCompletionStatus | null {
+  const value = payload["response_completion_status"];
+  if (typeof value !== "string") {
+    return null;
+  }
+  return (RESPONSE_COMPLETION_STATUSES as readonly string[]).includes(value)
+    ? (value as ResponseCompletionStatus)
+    : null;
+}
+
 /** Canonical agent-to-browser payload keys (frozen contract, WP6). */
 function buildMessage(topic: InboundTopic, envelope: Envelope): InboundMessage {
   const { payload } = envelope;
@@ -164,12 +210,21 @@ function buildMessage(topic: InboundTopic, envelope: Envelope): InboundMessage {
         state: readOneOf(payload, "state", "payload", AGENT_ACTIVITY_STATES),
       };
     case TOPIC_TRANSCRIPT:
+      return {
+        topic,
+        envelope,
+        text: readString(payload, "text", "payload", MAX_TEXT_CHARS),
+        isFinal: readBoolean(payload, "is_final", "payload"),
+      };
     case TOPIC_RESPONSE:
       return {
         topic,
         envelope,
         text: readString(payload, "text", "payload", MAX_TEXT_CHARS),
         isFinal: readBoolean(payload, "is_final", "payload"),
+        completionStatus: readToleratedCompletionStatus(payload),
+        fallbackTemplateId: readOptionalString(payload, "fallback_template_id", "payload", 128),
+        segmentSequence: readOptionalNonNegativeInteger(payload, "segment_sequence"),
       };
     case TOPIC_PLAYBACK:
       return {

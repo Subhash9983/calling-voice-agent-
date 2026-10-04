@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from voice_agent.provider_registry.approved import check_agent_config
+from voice_agent.provider_registry.llm_check_config import (
+    LLM_CHECK_AGENT_CONFIG_ID,
+    llm_check_agent_config_document,
+)
 from voice_agent.provider_registry.media_check_config import (
     MEDIA_CHECK_AGENT_CONFIG_ID,
     media_check_agent_config_document,
@@ -54,6 +58,8 @@ def builtin_config_lookup(config_id: str) -> Mapping[str, Any] | None:
         return media_check_agent_config_document()
     if config_id == STT_CHECK_AGENT_CONFIG_ID:
         return stt_check_agent_config_document()
+    if config_id == LLM_CHECK_AGENT_CONFIG_ID:
+        return llm_check_agent_config_document()
     return None
 
 

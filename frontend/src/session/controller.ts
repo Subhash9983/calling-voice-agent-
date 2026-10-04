@@ -10,7 +10,7 @@
 import { ApiError, type ControlApiClient } from "../api";
 import { watchDeviceLoss, type MicrophoneResult } from "../audio/microphone";
 import { playbackPayload, type ClientEventInput, type ClientEventType } from "../contracts/realtime";
-import { STT_COMPONENT } from "../contracts/diagnosticsApi";
+import { CONVERSATION_COMPONENT, STT_COMPONENT } from "../contracts/diagnosticsApi";
 import type { DisconnectReason, TransportJoin } from "../contracts/sessionApi";
 import type {
   ClientEventOutcome,
@@ -19,7 +19,12 @@ import type {
   TransportState,
 } from "../livekit/transport";
 import { RECONNECT_WINDOW_MS } from "../livekit/transport";
-import { summarizeCost, summarizeOperations } from "./evidence";
+import {
+  summarizeConversationCost,
+  summarizeConversationOperations,
+  summarizeCost,
+  summarizeOperations,
+} from "./evidence";
 import { PlaybackAckTracker } from "./playbackAcks";
 import {
   INITIAL_SESSION_STATE,
@@ -453,16 +458,23 @@ export class VoiceSessionController {
 
   /** Best-effort: any failure (including a 503 not-ready) is a neutral "not available". */
   private async loadEvidence(sessionId: string): Promise<void> {
-    const [operations, costs] = await Promise.allSettled([
+    const [operations, conversationOperations, costs] = await Promise.allSettled([
       this.deps.api.listOperations(sessionId, { component: STT_COMPONENT, limit: EVIDENCE_LIMIT }),
+      this.deps.api.listOperations(sessionId, { component: CONVERSATION_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.getCosts(sessionId),
     ]);
+    const costsValue = costs.status === "fulfilled" ? costs.value : null;
     this.dispatch({
       type: "evidence_loaded",
       evidence: {
         status: "ready",
         operations: operations.status === "fulfilled" ? summarizeOperations(operations.value) : null,
-        cost: costs.status === "fulfilled" ? summarizeCost(costs.value) : null,
+        cost: costsValue === null ? null : summarizeCost(costsValue),
+        conversation:
+          conversationOperations.status === "fulfilled"
+            ? summarizeConversationOperations(conversationOperations.value)
+            : null,
+        conversationCost: costsValue === null ? null : summarizeConversationCost(costsValue),
       },
     });
   }

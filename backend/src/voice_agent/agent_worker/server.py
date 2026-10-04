@@ -1,10 +1,12 @@
 """Local LiveKit agent-worker process (docs/14 §21; docs/05 §2, §21).
 
-``python -m voice_agent.agent_worker [--media-mode tone|echo|stt]``
+``python -m voice_agent.agent_worker [--media-mode tone|echo|stt|llm]``
 
 ``stt`` (WP7) runs local Silero VAD + the Turn Manager + Deepgram streaming
 STT, with no LLM or TTS, for sessions whose approved configuration has the
 Deepgram section; the Silero model is loaded once here, before registration.
+``llm`` (WP8) adds one GPT-6 Luna generation per accepted turn, published as
+``va.response.v1`` text (no TTS), for the approved OpenAI configuration.
 
 Startup: validate bootstrap settings through the WP3 loader and the worker
 readiness check (MongoDB + LiveKit credentials, default configuration),
@@ -151,7 +153,7 @@ def main(
     settings = outcome.loaded.settings
     configure_worker_logging(settings.app_log_level)
     mode = MediaMode(args.media_mode)
-    silero = prewarm() if mode is MediaMode.STT else None
+    silero = prewarm() if mode in (MediaMode.STT, MediaMode.LLM) else None
     if silero is not None:
         logging.getLogger("voice_agent.agent_worker").info("worker.silero_prewarmed")
     config = WorkerConfig(

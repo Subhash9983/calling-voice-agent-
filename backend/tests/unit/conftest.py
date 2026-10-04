@@ -1,7 +1,8 @@
 """Shared synthetic agent-configuration builders for configuration tests (WP3).
 
-Every value is synthetic. The system instruction is placeholder test text, not
-the separately approved Phase 0 prompt.
+Every value is synthetic except the OpenAI system instruction, which must be
+the exact approved ``phase0_general_voice_assistant_v1`` text (docs/10 §2):
+the approval gate accepts no other prompt for the ``openai`` provider (WP8).
 """
 
 from __future__ import annotations
@@ -12,10 +13,10 @@ from typing import Any
 import pytest
 
 from voice_agent.domain.agent_config import compute_config_checksum, compute_prompt_checksum
+from voice_agent.provider_registry.phase0_prompt import PHASE0_SYSTEM_INSTRUCTION
 
 BASELINE_CONFIG_ID = "11111111-1111-4111-8111-111111111111"
 BASELINE_AGENT_ID = "22222222-2222-4222-8222-222222222222"
-SYNTHETIC_PROMPT = "Synthetic WP3 test instruction.\r\nReply briefly."
 
 DocumentFactory = Callable[..., dict[str, Any]]
 
@@ -54,13 +55,13 @@ def _baseline_sections() -> dict[str, Any]:
             "adapter_version": "openai-adapter-0.1.0",
             "max_output_tokens": 250,
             "prompt_id": "phase0_general_voice_assistant_v1",
-            "system_instruction": SYNTHETIC_PROMPT,
+            "system_instruction": PHASE0_SYSTEM_INSTRUCTION,
             "system_instruction_version": "1",
-            "prompt_checksum": compute_prompt_checksum(SYNTHETIC_PROMPT),
+            "prompt_checksum": compute_prompt_checksum(PHASE0_SYSTEM_INSTRUCTION),
             "tool_set_version": "phase0_empty_tool_set_v1",
             "credential_ref": "env:OPENAI_API_KEY",
             "safe_options": {
-                "reasoning.effort": "none",
+                "reasoning": {"effort": "none"},
                 "streaming": True,
                 "tools": "disabled",
                 "web_search": "disabled",

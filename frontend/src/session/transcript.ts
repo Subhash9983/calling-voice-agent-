@@ -11,6 +11,14 @@ export interface TranscriptLine {
   readonly turnId: string | null;
   readonly text: string;
   readonly isFinal: boolean;
+  /**
+   * Set only for a delivered assistant line whose generation hit the
+   * provider length limit (docs/08 §12 `response_completion_status in
+   * {truncated_partial, truncated_fallback}`). Omitted (not `false`) on
+   * every other line so it never shows up in an equality check that does
+   * not care about it.
+   */
+  readonly truncated?: boolean;
 }
 
 export const MAX_FINAL_LINES = 50;
@@ -18,6 +26,15 @@ export const MAX_FINAL_LINES = 50;
 function withoutProvisional(lines: readonly TranscriptLine[]): readonly TranscriptLine[] {
   const last = lines.at(-1);
   return last !== undefined && !last.isFinal ? lines.slice(0, -1) : lines;
+}
+
+/**
+ * Drops a still-streaming (non-final) line, used when its generation is
+ * cancelled or interrupted (docs/06 §10, docs/08 §13): a cancelled
+ * generation must never linger on screen as if still in progress.
+ */
+export function dropProvisionalLine(lines: readonly TranscriptLine[]): readonly TranscriptLine[] {
+  return withoutProvisional(lines);
 }
 
 function boundFinals(lines: readonly TranscriptLine[]): readonly TranscriptLine[] {

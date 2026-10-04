@@ -170,7 +170,7 @@ def test_unapproved_identity_is_rejected(
         ("stt", {"keyterms": ["NiaLabs"]}),
         ("stt", {"endpoint": "wss://attacker.example"}),
         ("stt", {"api_key": "sk-canaryAa1Bb2Cc3Dd4Ee5Ff6"}),
-        ("conversation_engine", {"reasoning.effort": "high"}),
+        ("conversation_engine", {"reasoning": {"effort": "high"}}),
         ("conversation_engine", {"tools": "enabled"}),
         ("conversation_engine", {"streaming": 1}),
         ("tts", {"voice_cloning": "enabled"}),

@@ -72,6 +72,15 @@ async def _bounded(awaitable: Awaitable[object], what: str) -> bool:
     return True
 
 
+def _component(event_type: EventType) -> str:
+    prefix = event_type.value.split(".", 1)[0]
+    if prefix == "stt":
+        return "stt"
+    if prefix == "conversation":
+        return "conversation_engine"
+    return "worker"
+
+
 def _provider_duration_ms(usage: UsageReport) -> int | None:
     for item in usage.items:
         if item.unit is UsageUnit.TRANSCRIBED_AUDIO_SECONDS and (
@@ -136,7 +145,7 @@ class SttEvidence:
             turn_id=turn_id,
             operation_id=operation_id,
             correlation_id=self._context.correlation_id,
-            component="stt" if event_type.value.startswith("stt.") else "worker",
+            component=_component(event_type),
             producer_service="agent_worker",
             visibility=EventVisibility.INTERNAL,
             payload=payload or {},
@@ -238,6 +247,27 @@ class SttEvidence:
                 "sent_audio_ms": event.sent_audio_ms,
                 "connected_ms": event.connected_ms,
             },
+        )
+
+    async def save_operation(self, operation: ProviderOperation) -> bool:
+        """Persist a non-STT attempt (e.g. a conversation generation) as it progresses."""
+        self.operations[operation.operation_id] = operation
+        return await _bounded(self._operations.save(operation), "provider_operation")
+
+    async def operation_settled(self, operation: ProviderOperation) -> None:
+        """Save a terminal attempt, price it, and include it in the session cost run."""
+        if not operation.is_terminal:
+            raise ValueError("only a terminal operation can be settled")
+        await self.save_operation(operation)
+        metered = MeteredUsage(
+            component=operation.component,
+            provider=operation.provider,
+            model=operation.model,
+            usage=operation.usage,
+        )
+        self._closed_usage.append(metered)
+        await self._price(
+            (metered,), scope=CostScope.OPERATION, operation_id=operation.operation_id
         )
 
     # --------------------------------------------------------------- costs --
