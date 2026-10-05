@@ -1,5 +1,5 @@
-import type { ReactElement } from "react";
-import type { EvidenceState } from "../session/evidence";
+import { Fragment, type ReactElement } from "react";
+import type { ErrorCodeCount, EvidenceState, LatencyStageSummary, SessionOutcomeSummary } from "../session/evidence";
 
 const NOT_AVAILABLE = "Not available yet";
 
@@ -19,7 +19,70 @@ function formatMs(ms: number | null): string {
   return ms === null ? NOT_AVAILABLE : `${ms.toFixed(0)} ms`;
 }
 
-/** Per-session STT summary (docs/04 §12, §14). Missing data is neutral, never an error. */
+/** Turns a safe snake_case enum value into a short readable label (never echoes free text). */
+function humanize(value: string): string {
+  const spaced = value.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function errorCodeLabel(code: ErrorCodeCount): string {
+  return `${humanize(code.component)} / ${humanize(code.errorType)} (${String(code.count)})`;
+}
+
+function SessionOutcomeSection({ outcome }: { readonly outcome: SessionOutcomeSummary | null }): ReactElement {
+  return (
+    <section aria-labelledby="outcome-evidence-heading">
+      <h3 id="outcome-evidence-heading">Session outcome</h3>
+      {outcome === null ? (
+        <p className="muted">Shown after the session ends.</p>
+      ) : (
+        <>
+          <dl className="facts">
+            <dt>Final status</dt>
+            <dd>{humanize(outcome.status)}</dd>
+            <dt>End reason</dt>
+            <dd>{outcome.disconnectReason === null ? NOT_AVAILABLE : humanize(outcome.disconnectReason)}</dd>
+            <dt>Errors recorded</dt>
+            <dd>{outcome.errorCount === null ? NOT_AVAILABLE : outcome.errorCount}</dd>
+          </dl>
+          {outcome.errorCodes.length > 0 && (
+            <ul className="error-codes">
+              {outcome.errorCodes.map((code) => (
+                <li key={`${code.component}:${code.errorType}`}>{errorCodeLabel(code)}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function LatencySummarySection({ latency }: { readonly latency: readonly LatencyStageSummary[] | null }): ReactElement {
+  return (
+    <section aria-labelledby="latency-evidence-heading">
+      <h3 id="latency-evidence-heading">Latency summary</h3>
+      {latency === null ? (
+        <p className="muted">Shown after the session ends.</p>
+      ) : (
+        <dl className="facts">
+          {latency.map((stage) => (
+            <Fragment key={stage.key}>
+              <dt>{stage.label}</dt>
+              <dd>
+                {stage.metric === null
+                  ? NOT_AVAILABLE
+                  : `${formatMs(stage.metric.averageMs)} avg, ${formatMs(stage.metric.p95Ms)} p95 (n=${String(stage.metric.sampleCount)})`}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+}
+
+/** Per-session evidence report (docs/04 §8, §12-§14, §17). Missing data is neutral, never an error. */
 export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }): ReactElement {
   const cost = evidence.status === "ready" ? evidence.cost : null;
   const sttUsd = cost?.sttUsd ?? null;
@@ -29,10 +92,16 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
   const tts = evidence.status === "ready" ? (evidence.tts ?? null) : null;
   const ttsCost = evidence.status === "ready" ? (evidence.ttsCost ?? null) : null;
   const ttsUsd = ttsCost?.ttsUsd ?? null;
+  const outcome = evidence.status === "ready" ? evidence.outcome : null;
+  const latency = evidence.status === "ready" ? evidence.latency : null;
   return (
-    <>
-      <section aria-labelledby="evidence-heading" className="panel">
-        <h2 id="evidence-heading">Speech recognition summary</h2>
+    <section aria-labelledby="evidence-report-heading" className="panel">
+      <h2 id="evidence-report-heading">Session evidence</h2>
+
+      <SessionOutcomeSection outcome={outcome} />
+
+      <section aria-labelledby="evidence-heading">
+        <h3 id="evidence-heading">Speech recognition summary</h3>
         {evidence.status === "idle" ? (
           <p className="muted">Shown after the session ends.</p>
         ) : (
@@ -48,8 +117,9 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
           </dl>
         )}
       </section>
-      <section aria-labelledby="conversation-evidence-heading" className="panel">
-        <h2 id="conversation-evidence-heading">Conversation engine summary</h2>
+
+      <section aria-labelledby="conversation-evidence-heading">
+        <h3 id="conversation-evidence-heading">Conversation engine summary</h3>
         {evidence.status === "idle" ? (
           <p className="muted">Shown after the session ends.</p>
         ) : (
@@ -69,8 +139,9 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
           </dl>
         )}
       </section>
-      <section aria-labelledby="tts-evidence-heading" className="panel">
-        <h2 id="tts-evidence-heading">Speech synthesis summary</h2>
+
+      <section aria-labelledby="tts-evidence-heading">
+        <h3 id="tts-evidence-heading">Speech synthesis summary</h3>
         {evidence.status === "idle" ? (
           <p className="muted">Shown after the session ends.</p>
         ) : (
@@ -88,6 +159,8 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
           </dl>
         )}
       </section>
-    </>
+
+      <LatencySummarySection latency={latency} />
+    </section>
   );
 }

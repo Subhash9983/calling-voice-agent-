@@ -19,10 +19,10 @@ from voice_agent.contracts.cost import (
     CostLine,
     EvidenceStatus,
     FxRate,
-    PricingBasis,
     RateCard,
 )
 from voice_agent.contracts.enums import CalculationStatus
+from voice_agent.contracts.usage import UsageUnit
 from voice_agent.domain.agent_config import AgentConfigEnvironment
 from voice_agent.domain.cost_entry import (
     MAX_DECIMAL_PLACES,
@@ -64,6 +64,8 @@ class CostRunContext:
     scope: CostScope = CostScope.SESSION
     turn_id: str | None = None
     operation_id: str | None = None
+    # Retry-group reference (docs/02 §10): every attempt line carries it.
+    logical_request_id: str | None = None
     supersedes_calculation_run_id: str | None = None
 
 
@@ -92,9 +94,22 @@ def _fx_evidence(card: RateCard, line: CostLine) -> tuple[str, datetime]:
     return match.source_reference, _utc(match.effective_date)
 
 
+_TOKEN_UNITS: Final = frozenset(
+    {
+        UsageUnit.INPUT_TOKENS,
+        UsageUnit.CACHED_INPUT_TOKENS,
+        UsageUnit.CACHE_WRITE_TOKENS,
+        UsageUnit.OUTPUT_TOKENS,
+        UsageUnit.REASONING_TOKENS,
+    }
+)
+
+
 def _method(line: CostLine) -> str:
     if line.estimated:
-        return "estimated_tokens_x_public_rate"
+        if line.usage_unit in _TOKEN_UNITS:
+            return "estimated_tokens_x_public_rate"
+        return "estimated_quantity_x_public_rate"
     if line.evidence_status is EvidenceStatus.PROVIDER_USAGE_BASED:
         return "provider_reported_quantity_x_public_rate"
     return "measured_audio_x_public_rate"
@@ -113,6 +128,7 @@ def cost_entry_for_line(
         session_id=context.session_id,
         turn_id=context.turn_id,
         operation_id=context.operation_id,
+        logical_request_id=context.logical_request_id,
         correlation_id=context.correlation_id,
         agent_config_id=context.agent_config_id,
         component=CostComponent(line.component.value),
@@ -130,7 +146,7 @@ def cost_entry_for_line(
             unit_rate=line.unit_rate,
             rate_unit_quantity=line.rate_unit_quantity,
             currency=line.original_currency,
-            pricing_basis=PricingBasis.PER_UNIT,
+            pricing_basis=line.pricing_basis,
             rate_effective_from=_utc(card.effective_date),
             rate_card_version=card.rate_card_id,
         ),

@@ -20,6 +20,7 @@ from voice_agent.contracts.events import EventCategory, EventEnvelope, EventSeve
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import JoinTokenOutcome, SessionRecord
 from voice_agent.domain.cost_entry import CostEntryRecord
+from voice_agent.domain.error_event import ErrorEventRecord
 from voice_agent.domain.feedback import FeedbackRecord
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
@@ -180,6 +181,27 @@ class CostReader(Protocol):
         self, session_id: str, operation_ids: Sequence[str]
     ) -> Mapping[str, Decimal]:
         """Normalized USD charge per operation from its latest final operation-scope run."""
+        ...
+
+    async def session_entries(self, session_id: str, *, limit: int) -> Sequence[CostEntryRecord]:
+        """Every stored line of the session (all scopes and runs), at most ``limit``."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorCursor:
+    occurred_at: datetime
+    error_id: str
+
+
+@runtime_checkable
+class ErrorReader(Protocol):
+    """Read side of ``error_events`` for the control API (docs/04 §13)."""
+
+    async def list_session_errors(
+        self, session_id: str, *, limit: int, after: ErrorCursor | None = None
+    ) -> Sequence[ErrorEventRecord]:
+        """Oldest first by ``(occurred_at, error_id)``, at most ``limit`` records."""
         ...
 
 

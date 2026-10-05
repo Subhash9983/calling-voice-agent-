@@ -171,6 +171,7 @@ class SttCheck:
         self._stt_operation: str | None = None
         self._stt_available = False
         self._endpoint_timer: asyncio.Task[None] | None = None
+        self._media_started_ms = clock.monotonic_ms()
         self.counters: dict[str, int] = {}
 
     def _count(self, name: str) -> None:
@@ -179,6 +180,7 @@ class SttCheck:
     # ----------------------------------------------------------------- run --
     async def run(self) -> None:
         """Run until cancelled by the session runner; always closes STT and settles evidence."""
+        self._media_started_ms = self._clock.monotonic_ms()
         try:
             await self._start_stt()
             await self._start_gate()
@@ -510,6 +512,8 @@ class SttCheck:
         pending = [w.turn for w in (self._open, *self._awaiting.values()) if w is not None]
         for turn in (*pending, *self._final):
             await self._abandon(turn)
+        connected_ms = max(self._clock.monotonic_ms() - self._media_started_ms, 0)
+        await self._evidence.transport_closed(connected_ms)
         await self._evidence.finish()
 
     async def _abandon(self, turn: ConversationTurn) -> None:

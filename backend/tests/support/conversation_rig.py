@@ -41,6 +41,7 @@ from voice_agent.conversation_adapters.openai.adapter import OpenAiConversationA
 from voice_agent.costing.rate_card import phase0_rate_card
 from voice_agent.domain.agent_config import AgentConfigEnvironment
 from voice_agent.domain.cost_entry import CostEntryRecord
+from voice_agent.domain.error_event import ErrorEventRecord
 from voice_agent.domain.turn import ConversationTurn
 from voice_agent.events_and_latency.clock import SystemClock, UuidIdGenerator
 from voice_agent.persistence.in_memory import InMemoryOperationRepository, InMemoryTurnRepository
@@ -137,6 +138,15 @@ class CostRuns:
 
 
 @dataclass
+class ErrorLog:
+    records: list[ErrorEventRecord] = field(default_factory=list)
+
+    async def record(self, error: ErrorEventRecord) -> bool:
+        self.records.append(error)
+        return True
+
+
+@dataclass
 class Rig:
     orchestrator: ConversationOrchestrator
     gate: OrchestratedGate
@@ -151,6 +161,8 @@ class Rig:
     ended: list[DisconnectReason]
     frame: int = 0
     task: asyncio.Task[None] | None = None
+    costs: CostRuns = field(default_factory=CostRuns)
+    errors: ErrorLog = field(default_factory=ErrorLog)
 
     async def start(self) -> None:
         self.task = asyncio.create_task(self.orchestrator.run())
@@ -213,6 +225,8 @@ def build(
     finalize_timeout_ms: int = 300,
     clock: SystemClock | None = None,
     deadline_at: datetime | None = None,
+    tts_identity: tuple[str, str] = ("mock_tts", "mock-tts-v1"),
+    transport_provider: str | None = None,
 ) -> Rig:
     order: list[str] = []
     ended: list[DisconnectReason] = []
@@ -221,7 +235,7 @@ def build(
     ids = UuidIdGenerator()
     connector = deepgram or FakeDeepgramConnector(list(transcripts))
     turns, operations = InMemoryTurnRepository(), InMemoryOperationRepository()
-    events = EventLog()
+    events, costs, errors = EventLog(), CostRuns(), ErrorLog()
     evidence = SttEvidence(
         EvidenceContext(
             session_id=SESSION_ID,
@@ -229,14 +243,16 @@ def build(
             agent_config_id=CONFIG_ID,
             environment=AgentConfigEnvironment.DEVELOPMENT,
             worker_generation=1,
+            transport_provider=transport_provider,
         ),
         turns=turns,
         operations=operations,
         events=events,
-        costs=CostRuns(),
+        costs=costs,
         rate_card=phase0_rate_card(),
         clock=clock,
         ids=ids,
+        errors=errors,
     )
     publisher = RealtimePublisher(
         transport, session_id=SESSION_ID, correlation_id="wp10-test", clock=clock, ids=ids
@@ -266,12 +282,12 @@ def build(
         speech=SpeechConfig(
             tts=adapter,
             transport=transport,
-            voice=VOICE,
+            voice=TtsVoiceConfig(provider=tts_identity[0], model=tts_identity[1], voice_id="priya"),
             setup=SpeechSetup(
                 session_id=SESSION_ID,
                 worker_generation=1,
-                provider="mock_tts",
-                model="mock-tts-v1",
+                provider=tts_identity[0],
+                model=tts_identity[1],
                 voice_id="priya",
                 retry=no_wait,
                 ack_grace_ms=0,
@@ -330,4 +346,6 @@ def build(
         events,
         order,
         ended,
+        costs=costs,
+        errors=errors,
     )

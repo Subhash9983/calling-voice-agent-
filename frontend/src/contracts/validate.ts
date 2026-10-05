@@ -76,6 +76,23 @@ export function readBoolean(source: JsonRecord, key: string, path: string): bool
   return value;
 }
 
+export function readOptionalBoolean(
+  source: JsonRecord,
+  key: string,
+  path: string,
+): boolean | null {
+  const value = source[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return readBoolean(source, key, path);
+}
+
+export function readOptionalNumber(source: JsonRecord, key: string): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function readOneOf<T extends string>(
   source: JsonRecord,
   key: string,

@@ -122,6 +122,7 @@ class CostCalculator:
             converted_cost=gross * fx,
             evidence_status=_EVIDENCE_BY_SOURCE[item.source],
             estimated=item.estimated,
+            pricing_basis=rate.pricing_basis,
         )
 
 

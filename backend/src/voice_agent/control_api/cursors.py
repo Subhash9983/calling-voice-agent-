@@ -16,7 +16,7 @@ from typing import Any
 
 from voice_agent.contracts.base import CANONICAL_UUID_LENGTH
 from voice_agent.control_api.errors import ApiError, validation_failed
-from voice_agent.ports.control_plane import OperationCursor, SessionCursor
+from voice_agent.ports.control_plane import ErrorCursor, OperationCursor, SessionCursor
 
 CURSOR_FIELD = "query.cursor"
 CURSOR_INVALID = "cursor_invalid"
@@ -92,3 +92,16 @@ def decode_operation_cursor(cursor: str | None) -> OperationCursor | None:
     if parsed is None:
         raise _invalid()
     return OperationCursor(created_at=parsed[0], operation_id=parsed[1])
+
+
+def encode_error_cursor(occurred_at: datetime, error_id: str) -> str:
+    return encode_cursor("errors", {"c": occurred_at.isoformat(), "i": error_id})
+
+
+def decode_error_cursor(cursor: str | None) -> ErrorCursor | None:
+    if cursor is None:
+        return None
+    parsed = _timestamp_and_id(_decode("errors", cursor))
+    if parsed is None:
+        raise _invalid()
+    return ErrorCursor(occurred_at=parsed[0], error_id=parsed[1])

@@ -1,13 +1,18 @@
-"""Durable STT evidence for a worker session (docs/02 §7-§10, docs/07 §14, §18; docs/15).
+"""Durable provider-attempt evidence for a worker session (docs/02 §7-§12, docs/07 §14; docs/15).
 
 - every stream attempt is one ``provider_operations`` row (``stt_stream``):
   created at ``stt.stream_started`` (or directly failed when the connect
   failed), completed at ``stt.stream_closed`` with usage, timing, safe
   counters, the provider request ID, and the normalized failure summary;
-- each closed attempt is priced immediately as an operation-scope cost run
-  (Decimal arithmetic, dated rate card, missing usage never priced at zero);
-  :meth:`finish` writes the session-scope run over every attempt, which the
-  control API reports as the session cost;
+- every terminal STT/LLM/TTS attempt is priced through one
+  :class:`AttemptCostLedger` as an operation-scope run carrying its
+  session/turn/operation/logical-request correlation (dated rate card,
+  missing usage never priced at zero); a repeated settle is a no-op and late
+  usage supersedes the attempt's earlier run; :meth:`finish` writes the
+  session-scope run over each attempt exactly once (WP11), and a late
+  settle after :meth:`finish` supersedes that session run;
+- a failed or timed-out attempt also records one normalized ``error_events``
+  row (safe fields only; WP11);
 - turns are saved through the turn repository; the transcript is durable
   before anything may be authorized from it;
 - lifecycle events carry IDs, timings, and counts only, never transcript text.
@@ -20,8 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final, Protocol
 
@@ -30,27 +35,33 @@ from pydantic import JsonValue
 from voice_agent.contracts.cost import RateCard
 from voice_agent.contracts.enums import OperationComponent, OperationStatus
 from voice_agent.contracts.events import EventEnvelope, EventSeverity, EventType, EventVisibility
+from voice_agent.contracts.failures import NormalizedFailure
 from voice_agent.contracts.stt import SttStreamClosed, SttStreamOutcome, SttStreamStarted
 from voice_agent.contracts.usage import UsageReport, UsageSource, UsageUnit
-from voice_agent.costing.calculator import CostCalculator
-from voice_agent.costing.cost_entries import CostRunContext, cost_entries_from_calculation
+from voice_agent.costing.attempt_ledger import AttemptCostLedger, LedgerContext
+from voice_agent.costing.usage_normalization import transport_usage
 from voice_agent.domain.agent_config import AgentConfigEnvironment
-from voice_agent.domain.cost_entry import CostEntryRecord, CostScope, RateSourceType
+from voice_agent.domain.cost_entry import CostEntryRecord
+from voice_agent.domain.error_event import ErrorEventRecord, error_event_from_failure
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
 from voice_agent.ports.clock import Clock, IdGenerator
 from voice_agent.ports.control_plane import EventRecord, SessionEventLog
-from voice_agent.ports.costing import MeteredUsage
 from voice_agent.ports.repositories import OperationRepository, TurnRepository
 
 STORE_TIMEOUT_S: Final = 2.0
 STT_STREAM_OPERATION: Final = "stt_stream"
-RATE_SOURCE_REFERENCE: Final = "docs/15 Phase 0 rate card (public price snapshot)"
+TRANSPORT_OPERATION: Final = "webrtc_session"
+_ERROR_STATUSES: Final = frozenset({OperationStatus.FAILED, OperationStatus.TIMED_OUT})
 _LOGGER = logging.getLogger("voice_agent.agent_worker.stt")
 
 
 class CostRunWriter(Protocol):
     async def insert_run(self, entries: Sequence[CostEntryRecord]) -> None: ...
+
+
+class ErrorRecorder(Protocol):
+    async def record(self, error: ErrorEventRecord) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +71,9 @@ class EvidenceContext:
     agent_config_id: str
     environment: AgentConfigEnvironment
     worker_generation: int
+    adapter_versions: Mapping[OperationComponent, str] = field(default_factory=dict)
+    # Set for a real WebRTC session: its participant time is recorded (docs/15 §5.3).
+    transport_provider: str | None = None
 
 
 async def _bounded(awaitable: Awaitable[object], what: str) -> bool:
@@ -111,18 +125,30 @@ class SttEvidence:
         rate_card: RateCard,
         clock: Clock,
         ids: IdGenerator,
+        errors: ErrorRecorder | None = None,
     ) -> None:
         self._context = context
         self._turns = turns
         self._operations = operations
         self._events = events
         self._costs = costs
-        self._rate_card = rate_card
-        self._calculator = CostCalculator(rate_card)
+        self._errors = errors
+        self._ledger = AttemptCostLedger(
+            LedgerContext(
+                session_id=context.session_id,
+                correlation_id=context.correlation_id,
+                agent_config_id=context.agent_config_id,
+                environment=context.environment,
+            ),
+            card=rate_card,
+            ids=ids,
+            clock=clock,
+        )
         self._clock = clock
         self._ids = ids
         self.operations: dict[str, ProviderOperation] = {}
-        self._closed_usage: list[MeteredUsage] = []
+        self._errored: set[str] = set()
+        self._transport_recorded = False
         self._finished = False
 
     # -------------------------------------------------------------- turns --
@@ -137,12 +163,18 @@ class SttEvidence:
         operation_id: str | None = None,
         payload: dict[str, JsonValue] | None = None,
         severity: EventSeverity = EventSeverity.INFO,
+        occurred_at: datetime | None = None,
     ) -> None:
+        """Append one durable event; ``occurred_at`` is the moment it happened.
+
+        Writers that queue the append (the ordered evidence writer) pass the
+        time captured at submit, so a queued write never skews stage latency.
+        """
         now = self._clock.utc_now()
         envelope = EventEnvelope(
             event_id=self._ids.new_id(),
             event_type=event_type,
-            occurred_at=now,
+            occurred_at=occurred_at or now,
             session_id=self._context.session_id,
             turn_id=turn_id,
             operation_id=operation_id,
@@ -231,16 +263,7 @@ class SttEvidence:
         if operation.is_terminal:
             return
         done = self._terminal(operation, event)
-        self.operations[operation_id] = done
-        await _bounded(self._operations.save(done), "provider_operation")
-        metered = MeteredUsage(
-            component=OperationComponent.STT,
-            provider=done.provider,
-            model=done.model,
-            usage=event.usage,
-        )
-        self._closed_usage.append(metered)
-        await self._price((metered,), scope=CostScope.OPERATION, operation_id=operation_id)
+        await self.operation_settled(done)
         await self.event(
             EventType.STT_STREAM_CLOSED,
             operation_id=operation_id,
@@ -257,58 +280,78 @@ class SttEvidence:
         return await _bounded(self._operations.save(operation), "provider_operation")
 
     async def operation_settled(self, operation: ProviderOperation) -> None:
-        """Save a terminal attempt, price it, and include it in the session cost run."""
+        """Save a terminal attempt, price it once, and record its normalized error."""
         if not operation.is_terminal:
             raise ValueError("only a terminal operation can be settled")
         await self.save_operation(operation)
-        metered = MeteredUsage(
-            component=operation.component,
-            provider=operation.provider,
+        await _bounded(self._write_costs(lambda: self._ledger.settle(operation)), "cost_entries")
+        await self._record_error(operation)
+        if self._finished:  # late evidence supersedes the session run (WP11)
+            await _bounded(self._write_costs(self._ledger.session_run), "cost_entries")
+
+    async def transport_closed(self, connected_ms: int) -> None:
+        """Record the session's WebRTC participant time once (LiveKit usage, docs/06 §16)."""
+        provider = self._context.transport_provider
+        if provider is None or self._transport_recorded:
+            return
+        self._transport_recorded = True
+        now = self._clock.utc_now()
+        operation = ProviderOperation(
+            operation_id=self._ids.new_id(),
+            logical_request_id=self._ids.new_id(),
+            session_id=self._context.session_id,
+            component=OperationComponent.TRANSPORT,
+            operation_type=TRANSPORT_OPERATION,
+            provider=provider,
+            worker_generation=self._context.worker_generation,
+        ).transition_to(
+            OperationStatus.STARTED, started_at=now - timedelta(milliseconds=connected_ms)
+        )
+        done = operation.succeed(transport_usage(connected_ms=connected_ms)).model_copy(
+            update={"total_duration_ms": connected_ms}
+        )
+        await self.operation_settled(done)
+
+    # -------------------------------------------------------------- errors --
+    async def _record_error(self, operation: ProviderOperation) -> None:
+        failure = operation.failure
+        if (
+            self._errors is None
+            or failure is None
+            or operation.status not in _ERROR_STATUSES
+            or operation.operation_id in self._errored
+        ):
+            return
+        self._errored.add(operation.operation_id)
+        await _bounded(self._store_error(self._errors, operation, failure), "error_event")
+
+    async def _store_error(
+        self, errors: ErrorRecorder, operation: ProviderOperation, failure: NormalizedFailure
+    ) -> None:
+        """Map and store inside the bounded write: a mapping failure never blocks realtime."""
+        record = error_event_from_failure(
+            error_id=self._ids.new_id(),
+            failure=failure,
+            correlation_id=self._context.correlation_id,
+            environment=self._context.environment,
+            recorded_at=self._clock.utc_now(),
+            adapter_version=self._context.adapter_versions.get(operation.component),
             model=operation.model,
-            usage=operation.usage,
+            logical_request_id=operation.logical_request_id,
+            attempt_number=operation.attempt_number,
         )
-        self._closed_usage.append(metered)
-        await self._price(
-            (metered,), scope=CostScope.OPERATION, operation_id=operation.operation_id
-        )
+        await errors.record(record)
 
     # --------------------------------------------------------------- costs --
-    def _run_context(self, scope: CostScope, operation_id: str | None) -> CostRunContext:
-        now = self._clock.utc_now()
-        return CostRunContext(
-            session_id=self._context.session_id,
-            calculation_run_id=self._ids.new_id(),
-            calculation_version=1,
-            correlation_id=self._context.correlation_id,
-            agent_config_id=self._context.agent_config_id,
-            environment=self._context.environment,
-            calculated_at=now,
-            rate_source_type=RateSourceType.PUBLIC_PRICE,
-            rate_source_reference=RATE_SOURCE_REFERENCE,
-            rate_retrieved_at=now,
-            scope=scope,
-            operation_id=operation_id,
-        )
-
-    async def _price(
-        self, usages: Sequence[MeteredUsage], *, scope: CostScope, operation_id: str | None
-    ) -> None:
-        if self._costs is None:
-            return
-        calculation = self._calculator.calculate(usages)
-        entries = cost_entries_from_calculation(
-            calculation,
-            card=self._rate_card,
-            context=self._run_context(scope, operation_id),
-            ids=self._ids,
-        )
-        if entries:
-            await _bounded(self._costs.insert_run(entries), "cost_entries")
+    async def _write_costs(self, price: Callable[[], Sequence[CostEntryRecord]]) -> None:
+        """Price and store inside the bounded write: a costing fault never blocks realtime."""
+        entries = price()
+        if self._costs is not None and entries:
+            await self._costs.insert_run(entries)
 
     async def finish(self) -> None:
-        """Session-scope cost run over every closed attempt (idempotent)."""
+        """Session-scope cost run over every settled attempt (idempotent)."""
         if self._finished:
             return
         self._finished = True
-        if self._closed_usage:
-            await self._price(self._closed_usage, scope=CostScope.SESSION, operation_id=None)
+        await _bounded(self._write_costs(self._ledger.session_run), "cost_entries")

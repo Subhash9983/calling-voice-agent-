@@ -542,7 +542,7 @@ Identity and relationship fields:
 Classification fields:
 
 - required `component`: `transport`, `stt`, `conversation_engine`, `tts`, `retrieval`, `tool`, or future `telephony`;
-- required normalized `operation_type`, such as `connect`, `reconnect`, `transcribe_stream`, `generate_response`, `synthesize_stream`, `retrieve_context`, `invoke_tool`, or `place_call`;
+- required normalized `operation_type`, such as `connect`, `reconnect`, `transcribe_stream`, `generate_response`, `synthesize_stream`, `retrieve_context`, `invoke_tool`, `place_call`, or `webrtc_session` (the `transport` component's whole-session LiveKit participant-time usage record, WP11);
 - required Boolean `streaming`;
 - provider-specific operation names do not replace normalized classification.
 
@@ -874,7 +874,7 @@ Calculation metadata:
 - required `calculation_method`, `calculation_engine_version`, `calculated_at`, and `environment`;
 - optional `calculated_by` and safe `notes`;
 - `expires_at` is required after the parent session terminal retention anchor is known;
-- methods may include `provider_reported_quantity_x_public_rate`, `measured_audio_x_public_rate`, `estimated_tokens_x_public_rate`, `provider_reported_cost`, or `manual_adjustment`.
+- methods may include `provider_reported_quantity_x_public_rate`, `measured_audio_x_public_rate`, `estimated_tokens_x_public_rate`, `estimated_quantity_x_public_rate` (any non-token estimated billable quantity, WP11), `provider_reported_cost`, or `manual_adjustment`.
 
 Visibility:
 

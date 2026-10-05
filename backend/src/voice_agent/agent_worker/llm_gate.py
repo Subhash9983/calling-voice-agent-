@@ -49,7 +49,9 @@ from voice_agent.contracts.enums import (
     TurnStatus,
 )
 from voice_agent.contracts.events import EventSeverity, EventType
+from voice_agent.contracts.failures import ErrorComponent, ErrorType, NormalizedFailure
 from voice_agent.contracts.policies import RetryPolicy
+from voice_agent.contracts.usage import UsageReport
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn, InterruptionTiming
 from voice_agent.orchestration.generations import FenceVerdict, GenerationFence
@@ -476,6 +478,8 @@ class ConversationGate:
 
     async def _crashed(self, run: _TurnRun) -> None:
         with suppress(Exception):
+            await self._settle_orphan(run)
+        with suppress(Exception):
             failed = run.turn.fail()
             await self._evidence.save_turn(failed)
             await self._evidence.event(
@@ -485,6 +489,29 @@ class ConversationGate:
             await self._publisher.publish_error(
                 "response_failed", "The response could not be generated.", retryable=True
             )
+
+    async def _settle_orphan(self, run: _TurnRun) -> None:
+        """A crash never leaves its attempt open: fail it with unknown usage (WP11).
+
+        Usage stays unavailable (the provider may have billed tokens; that cost
+        is unknown, never zero) and the failure is recorded as an error.
+        """
+        operation = self._evidence.operations.get(run.operation_id or "")
+        if operation is None or operation.is_terminal:
+            return
+        failure = NormalizedFailure(
+            component=ErrorComponent.CONVERSATION_ENGINE,
+            provider=operation.provider,
+            error_type=ErrorType.INTERNAL_ERROR,
+            safe_message="The response generation stopped unexpectedly.",
+            retryable=False,
+            failure_phase="generation",
+            session_id=operation.session_id,
+            turn_id=operation.turn_id,
+            operation_id=operation.operation_id,
+            occurred_at=self._clock.utc_now(),
+        )
+        await self._evidence.operation_settled(operation.fail(failure, UsageReport.unavailable()))
 
     # ------------------------------------------------------------- close --
     async def wait_idle(self) -> None:

@@ -27,13 +27,16 @@ from voice_agent.persistence.mongodb.repositories.base import (
     encode,
     in_transaction,
     parse,
+    scheduled,
 )
 from voice_agent.ports.clock import IdGenerator
 from voice_agent.ports.control_plane import DuplicateKeyError
-from voice_agent.ports.persistence import PersistenceRejectedError, ReferenceNotFoundError
+from voice_agent.ports.persistence import PersistenceRejectedError
 from voice_agent.ports.repositories import RevisionConflictError
 
 MAX_RUN_LINES: Final = 200
+# 2,000 evidence lines plus one so a reader can detect truncation.
+MAX_SESSION_LINES: Final = 2001
 _TARGET_FIELD: Final = {
     CostScope.SESSION: "session_id",
     CostScope.TURN: "turn_id",
@@ -62,9 +65,9 @@ class MongoCostEntryStore(MongoRepository):
             if _encoded(existing) == _encoded(entries):
                 return
             raise DuplicateKeyError("calculation run already exists with other lines")
-        await self._require_session(first.session_id)
+        anchor = await self.require_session_anchor(first.session_id)
         await self._require_newer_version(first)
-        documents = [encode(entry) for entry in entries]
+        documents = [scheduled(encode(entry), anchor) for entry in entries]
 
         async def write(session: Any) -> None:
             await self.collection(Collection.COST_ENTRIES).insert_many(
@@ -110,13 +113,31 @@ class MongoCostEntryStore(MongoRepository):
             "operation_id": {"$in": wanted},
             "calculation_status": CalculationStatus.FINAL.value,
         }
+        # An attempt has several lines (one per priced unit, per version); a fixed
+        # 200-row read silently dropped later attempts of a full page (WP11).
+        bound = MAX_SESSION_LINES
         async with translate_errors():
             rows = await (
                 self.collection(Collection.COST_ENTRIES)
-                .find(filters, limit=MAX_RUN_LINES)
-                .to_list(length=MAX_RUN_LINES)
+                .find(filters, sort=[("operation_id", 1)], limit=bound)
+                .to_list(length=bound)
             )
         return _latest_charges([parse(CostEntryRecord, row) for row in rows])
+
+    async def session_entries(self, session_id: str, *, limit: int) -> Sequence[CostEntryRecord]:
+        """Bounded read of every line of one session (``ix_session_cost_versions``)."""
+        bounded = max(1, min(limit, MAX_SESSION_LINES))
+        async with translate_errors():
+            rows = await (
+                self.collection(Collection.COST_ENTRIES)
+                .find(
+                    {"session_id": session_id},
+                    sort=[("calculated_at", 1), ("cost_entry_id", 1)],
+                    limit=bounded,
+                )
+                .to_list(length=bounded)
+            )
+        return [parse(CostEntryRecord, row) for row in rows]
 
     async def session_charge_total(self, session_id: str) -> Decimal | None:
         lines = await self.latest_final_run(
@@ -151,14 +172,6 @@ class MongoCostEntryStore(MongoRepository):
         )
         if latest is not None and latest["calculation_version"] >= entry.calculation_version:
             raise RevisionConflictError("calculation_version must increase within its scope")
-
-    async def _require_session(self, session_id: str) -> None:
-        async with translate_errors():
-            found = await self.collection(Collection.VOICE_SESSIONS).count_documents(
-                {"session_id": session_id}, limit=1
-            )
-        if not found:
-            raise ReferenceNotFoundError("cost entries require an existing session")
 
 
 def _latest_charges(lines: Sequence[CostEntryRecord]) -> dict[str, Decimal]:

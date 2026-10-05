@@ -9,6 +9,7 @@ Values placed into aggregation-pipeline updates are always wrapped in
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import datetime
 from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
@@ -22,8 +23,12 @@ from voice_agent.persistence.mongodb.codecs.bson_codec import (
     to_bson,
 )
 from voice_agent.persistence.mongodb.collection_names import Collection
-from voice_agent.persistence.mongodb.documents.session import NONTERMINAL_SESSION_STATES
-from voice_agent.ports.persistence import PersistenceRejectedError
+from voice_agent.persistence.mongodb.documents.session import (
+    NONTERMINAL_SESSION_STATES,
+    TERMINAL_STATES,
+)
+from voice_agent.ports.persistence import PersistenceRejectedError, ReferenceNotFoundError
+from voice_agent.privacy_and_retention.expiry import session_expires_at
 
 Document = dict[str, Any]
 # Store-computed next reconciliation time: the minimum of every active
@@ -49,6 +54,30 @@ class MongoRepository:
     def collection(self, name: Collection) -> AsyncCollection[Document]:
         collection: AsyncCollection[Document] = self._persistence.database[name.value]
         return collection
+
+    async def require_session_anchor(self, session_id: str) -> datetime | None:
+        """Raise when the parent session is missing; return a terminal session's ``ended_at``.
+
+        Children written after the one-time terminal expiry propagation use the
+        returned anchor to schedule their own ``expires_at`` (docs/02 §20; WP11).
+        """
+        async with translate_errors():
+            raw = await self.collection(Collection.VOICE_SESSIONS).find_one(
+                {"session_id": session_id}, projection={"status": 1, "ended_at": 1, "_id": 0}
+            )
+        if raw is None:
+            raise ReferenceNotFoundError("the parent session does not exist")
+        if raw.get("status") not in TERMINAL_STATES:
+            return None
+        anchor: datetime | None = raw.get("ended_at")
+        return anchor
+
+
+def scheduled(document: Document, anchor: datetime | None) -> Document:
+    """``document`` with the R&D expiry of a terminal session's anchor (copy; never mutates)."""
+    if anchor is None or "expires_at" in document:
+        return document
+    return {**document, "expires_at": to_bson(session_expires_at(anchor))}
 
 
 def parse[M: BaseModel](model: type[M], raw: Mapping[str, Any]) -> M:

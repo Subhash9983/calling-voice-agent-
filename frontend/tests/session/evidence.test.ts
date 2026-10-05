@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { ErrorItemView } from "../../src/contracts/diagnosticsApi";
+import type { LatencySummaryView } from "../../src/contracts/sessionApi";
 import {
   summarizeConversationCost,
   summarizeConversationOperations,
   summarizeCost,
+  summarizeLatency,
   summarizeOperations,
+  summarizeOutcome,
   summarizeTtsCost,
   summarizeTtsOperations,
 } from "../../src/session/evidence";
@@ -160,5 +164,76 @@ describe("summarizeTtsCost", () => {
 
   it("has no TTS amount when the component is missing", () => {
     expect(summarizeTtsCost({ calculationStatus: "partial", totalUsd: "0", components: [] }).ttsUsd).toBeNull();
+  });
+});
+
+const errorItem = (component: string, errorType: string): ErrorItemView => ({
+  errorId: `err-${component}-${errorType}`,
+  component,
+  errorType,
+  category: "transient",
+  severity: "error",
+  retryable: true,
+  recovered: true,
+  userAffected: false,
+  safeMessage: "safe",
+  occurredAt: "2026-09-29T10:00:00Z",
+});
+
+describe("summarizeOutcome", () => {
+  it("reports a clean end with zero errors, never null, when the errors fetch succeeded", () => {
+    const outcome = summarizeOutcome({ status: "ended", disconnectReason: "user_ended" }, []);
+    expect(outcome).toEqual({
+      status: "ended",
+      disconnectReason: "user_ended",
+      errorCount: 0,
+      errorCodes: [],
+    });
+  });
+
+  it("groups errors by component and safe error type", () => {
+    const outcome = summarizeOutcome(
+      { status: "failed", disconnectReason: "provider_error" },
+      [errorItem("stt", "provider_timeout"), errorItem("stt", "provider_timeout"), errorItem("tts", "quota_exceeded")],
+    );
+    expect(outcome.errorCount).toBe(3);
+    expect(outcome.errorCodes).toEqual(
+      expect.arrayContaining([
+        { component: "stt", errorType: "provider_timeout", count: 2 },
+        { component: "tts", errorType: "quota_exceeded", count: 1 },
+      ]),
+    );
+  });
+
+  it("reports errorCount as null (not zero) when the errors fetch is unavailable", () => {
+    const outcome = summarizeOutcome({ status: "ended", disconnectReason: "user_ended" }, null);
+    expect(outcome.errorCount).toBeNull();
+    expect(outcome.errorCodes).toEqual([]);
+  });
+});
+
+const METRIC = { sampleCount: 2, averageMs: 100, p50Ms: 95, p95Ms: 150, maximumMs: 160 };
+
+describe("summarizeLatency", () => {
+  it("returns every known stage as not-available when the summary is absent", () => {
+    const stages = summarizeLatency(null);
+    expect(stages).toHaveLength(6);
+    expect(stages.every((stage) => stage.metric === null)).toBe(true);
+    expect(stages.map((stage) => stage.label)).toContain("Complete turn");
+  });
+
+  it("surfaces available stages and keeps missing ones null", () => {
+    const latency: LatencySummaryView = {
+      sttFinalization: METRIC,
+      llmFirstToken: null,
+      ttsFirstAudio: null,
+      firstAudibleResponse: null,
+      completeTurn: METRIC,
+      interruption: null,
+    };
+    const stages = summarizeLatency(latency);
+    expect(stages.find((stage) => stage.key === "sttFinalization")?.metric).toEqual(METRIC);
+    expect(stages.find((stage) => stage.key === "llmFirstToken")?.metric).toBeNull();
+    expect(stages.find((stage) => stage.key === "completeTurn")?.metric).toEqual(METRIC);
   });
 });

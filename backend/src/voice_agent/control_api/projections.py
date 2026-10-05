@@ -10,11 +10,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from voice_agent.contracts.enums import OperationComponent
-from voice_agent.contracts.events import browser_safe_view
+from voice_agent.contracts.cost import Currency, EvidenceStatus
+from voice_agent.contracts.enums import CalculationStatus, OperationComponent
+from voice_agent.contracts.events import EventSeverity, browser_safe_view
 from voice_agent.control_api.schemas.diagnostics import (
+    MAX_ERROR_MESSAGE_CHARS,
     CostBreakdownView,
     CostComponentView,
+    ErrorItem,
     EventItem,
     InterruptionView,
     OperationItem,
@@ -35,10 +38,15 @@ from voice_agent.control_api.schemas.sessions import (
     SessionListItem,
     SessionView,
 )
+from voice_agent.costing.calculator import round_for_report
+from voice_agent.costing.rate_card import rate_card_by_id
+from voice_agent.costing.reconciliation import ComponentCost
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import SessionRecord
 from voice_agent.domain.cost_entry import AggregationBehavior, CostEntryRecord
+from voice_agent.domain.error_event import ErrorEventRecord
 from voice_agent.domain.feedback import FeedbackRecord
+from voice_agent.events_and_latency.evidence_types import SessionEvidence
 from voice_agent.ports.control_plane import EventRecord, OperationView, TurnView
 from voice_agent.provider_registry.display import display_label
 
@@ -89,7 +97,33 @@ def session_brief(record: SessionRecord) -> SessionBrief:
     )
 
 
-def session_view(record: SessionRecord, name: str | None) -> SessionView:
+def _cost_summary(record: SessionRecord, evidence: SessionEvidence | None) -> CostSummaryView:
+    cost = None if evidence is None else evidence.cost
+    total = None if cost is None else cost.session_total_usd
+    return CostSummaryView(
+        currency=record.cost_currency,
+        rate_card_version=record.cost_rate_card_version,
+        calculation_status=CalculationStatus.UNAVAILABLE if cost is None else cost.session_status,
+        calculation_run_id=None if cost is None else cost.session_run_id,
+        estimated_total_usd=None if total is None else decimal_text(total),
+        reconciled=None if cost is None or total is None else cost.reconciled,
+    )
+
+
+def _error_counts(evidence: SessionEvidence) -> dict[str, int]:
+    summary = evidence.error_summary
+    return {
+        "total": summary.total,
+        "recoverable": summary.recoverable,
+        "unrecoverable": summary.unrecoverable,
+        "recovered": summary.recovered,
+    }
+
+
+def session_view(
+    record: SessionRecord, name: str | None, evidence: SessionEvidence | None = None
+) -> SessionView:
+    """Summary counters/latency/cost are derived from stored child records (WP11)."""
     return SessionView(
         session_id=record.session_id,
         status=record.status,
@@ -106,11 +140,14 @@ def session_view(record: SessionRecord, name: str | None) -> SessionView:
         recording=RecordingView(mode=record.recording_mode, status=record.recording_status),
         termination_requested=record.termination_request is not None,
         disconnect_reason=record.disconnect_reason,
-        cost_summary=CostSummaryView(
-            currency=record.cost_currency,
-            rate_card_version=record.cost_rate_card_version,
-            calculation_status="unavailable",
+        turn_summary=None if evidence is None else dict(evidence.turn_summary),
+        error_summary=None if evidence is None else _error_counts(evidence),
+        latency_summary=(
+            None
+            if evidence is None
+            else {name: stats.to_dict() for name, stats in evidence.latency.items()}
         ),
+        cost_summary=_cost_summary(record, evidence),
     )
 
 
@@ -227,29 +264,79 @@ def operation_item(view: OperationView, cost: Decimal | None = None) -> Operatio
     )
 
 
-def cost_breakdown(lines: Sequence[CostEntryRecord]) -> CostBreakdownView:
-    """Charge lines only contribute; allocation rows are never double counted."""
+def _inr_display(lines: Sequence[CostEntryRecord]) -> str | None:
+    """INR display from each line's original amount on its own dated card (Decision 069)."""
+    total = Decimal(0)
+    for line in lines:
+        card = rate_card_by_id(line.rate.rate_card_version)
+        fx = (
+            None
+            if card is None
+            else card.find_fx(line.currency_conversion.original_currency, Currency.INR)
+        )
+        if fx is None:
+            return None
+        total += line.amounts.net_cost_original_currency * fx
+    return decimal_text(round_for_report(total))
+
+
+def cost_breakdown(
+    lines: Sequence[CostEntryRecord], components: Sequence[ComponentCost] = ()
+) -> CostBreakdownView:
+    """Charge lines only contribute; allocation rows are never double counted.
+
+    ``components`` (from the attempt-level reconciliation) supplies the
+    retry/failure-related share of each component (docs/04 §14).
+    """
     charges = [line for line in lines if line.aggregation_behavior is AggregationBehavior.CHARGE]
     groups: dict[tuple[str, str], Decimal] = {}
     for line in charges:
         key = (line.component.value, line.provider_identity.provider)
         groups[key] = groups.get(key, Decimal(0)) + line.currency_conversion.converted_net_cost
+    retried = {(c.component, c.provider): c.retry_or_failure_usd for c in components}
     first = lines[0]
+    estimated = any(line.evidence_status is EvidenceStatus.ESTIMATED for line in charges)
     return CostBreakdownView(
         calculation_run_id=first.calculation_run_id,
         calculation_status=first.calculation_status,
+        evidence_status="estimated" if estimated else "usage_based",
+        rate_card_version=first.rate.rate_card_version,
         total_usd=decimal_text(sum(groups.values(), Decimal(0))),
-        total_inr_display=None,
+        total_inr_display=_inr_display(charges),
+        retry_or_failure_usd=decimal_text(sum(retried.values(), Decimal(0))),
         components=tuple(
             CostComponentView(
                 component=OperationComponent(component),
                 label=display_label(component, provider),
                 amount_usd=decimal_text(amount),
-                retry_or_failure_related=False,
+                retry_or_failure_related=retried.get((component, provider), Decimal(0)) > 0,
+                retry_or_failure_usd=decimal_text(retried.get((component, provider), Decimal(0))),
             )
             for (component, provider), amount in sorted(groups.items())
         ),
         calculated_at=first.calculated_at,
+    )
+
+
+def error_item(record: ErrorEventRecord, recovered_requests: frozenset[str]) -> ErrorItem:
+    """Safe allowlist only: no provider context, safe details, or restricted references."""
+    request = record.logical_request_id
+    return ErrorItem(
+        error_id=record.error_id,
+        diagnostic_code=record.diagnostic_code,
+        component=record.component,
+        error_type=record.error_type,
+        category=record.category,
+        severity=EventSeverity(record.severity.value),
+        retryable=record.retry.retryable,
+        retry_attempt_number=record.retry.retry_attempt_number,
+        fallback_attempted=record.fallback.attempted,
+        recovered=None if request is None else request in recovered_requests,
+        user_affected=record.impact.user_affected,
+        turn_id=record.turn_id,
+        operation_id=record.operation_id,
+        safe_message=record.message_safe[:MAX_ERROR_MESSAGE_CHARS],
+        occurred_at=record.occurred_at,
     )
 
 

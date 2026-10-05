@@ -284,8 +284,14 @@ def error_event_from_failure(
     recorded_at: datetime,
     adapter_version: str | None = None,
     model: str | None = None,
+    logical_request_id: str | None = None,
+    attempt_number: int | None = None,
 ) -> ErrorEventRecord:
-    """Map a normalized failure onto the durable error record with safe defaults."""
+    """Map a normalized failure onto the durable error record with safe defaults.
+
+    ``logical_request_id``/``attempt_number`` keep the error correlated with
+    its retry group and attempt (docs/02 §12; WP11).
+    """
     expected = failure.error_type is ErrorType.CANCELLATION
     diagnostic_code = f"{failure.component.value}.{failure.error_type.value}"
     context = None
@@ -304,6 +310,7 @@ def error_event_from_failure(
         session_id=failure.session_id,
         turn_id=failure.turn_id,
         operation_id=failure.operation_id,
+        logical_request_id=logical_request_id,
         correlation_id=correlation_id,
         error_fingerprint=error_fingerprint(
             component=failure.component,
@@ -322,7 +329,11 @@ def error_event_from_failure(
         provider_context=context,
         is_expected=expected,
         counts_toward_failure_rate=not expected,
-        retry=ErrorRetry(retryable=failure.retryable, retry_scheduled=False),
+        retry=ErrorRetry(
+            retryable=failure.retryable,
+            retry_scheduled=False,
+            retry_attempt_number=attempt_number,
+        ),
         fallback=ErrorFallback(
             attempted=failure.fallback_succeeded is not None,
             succeeded=bool(failure.fallback_succeeded),

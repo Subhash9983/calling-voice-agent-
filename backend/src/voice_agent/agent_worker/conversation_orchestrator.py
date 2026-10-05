@@ -233,8 +233,10 @@ class ConversationOrchestrator(SttCheck):
             if suppressed
             else EventType.TURN_INTERRUPTION_DETECTED
         )
-        evidence = self._evidence
-        self._writer.submit(lambda: evidence.event(event_type, turn_id=turn_id, payload=payload))
+        evidence, at = self._evidence, self._clock.utc_now()
+        self._writer.submit(
+            lambda: evidence.event(event_type, turn_id=turn_id, payload=payload, occurred_at=at)
+        )
 
     async def _on_barge_in(self, decision: AcceptInterruption) -> None:
         if self._blocked:

@@ -5,7 +5,14 @@
  * values (units, statuses): only the fields the evidence panel reads are
  * validated, and everything is bounded.
  */
-import { readArray, readRecord, readString, type JsonRecord } from "./validate";
+import {
+  readArray,
+  readBoolean,
+  readOptionalBoolean,
+  readRecord,
+  readString,
+  type JsonRecord,
+} from "./validate";
 
 export const STT_COMPONENT = "stt";
 export const TRANSCRIBED_AUDIO_SECONDS = "transcribed_audio_seconds";
@@ -76,6 +83,43 @@ function parseOperation(raw: unknown, index: number): OperationView {
 export function parseOperationList(raw: unknown): readonly OperationView[] {
   const envelope = readRecord(raw, "response");
   return readArray(envelope["items"], "response.items").map(parseOperation);
+}
+
+/**
+ * Safe error diagnostic (docs/04 §13). `safeMessage` is the backend-bounded
+ * ``safe_message`` field, never a raw provider exception or stack trace.
+ */
+export interface ErrorItemView {
+  readonly errorId: string;
+  readonly component: string;
+  readonly errorType: string;
+  readonly category: string;
+  readonly severity: string;
+  readonly retryable: boolean;
+  readonly recovered: boolean | null;
+  readonly userAffected: boolean;
+  readonly safeMessage: string;
+  readonly occurredAt: string;
+}
+
+export function parseErrorList(raw: unknown): readonly ErrorItemView[] {
+  const envelope = readRecord(raw, "response");
+  return readArray(envelope["items"], "response.items").map((item, index) => {
+    const path = `items[${String(index)}]`;
+    const source = readRecord(item, path);
+    return {
+      errorId: readString(source, "error_id", path, 64),
+      component: readString(source, "component", path, 64),
+      errorType: readString(source, "error_type", path, 64),
+      category: readString(source, "category", path, 64),
+      severity: readString(source, "severity", path, 16),
+      retryable: readBoolean(source, "retryable", path),
+      recovered: readOptionalBoolean(source, "recovered", path),
+      userAffected: readBoolean(source, "user_affected", path),
+      safeMessage: readString(source, "safe_message", path, 500),
+      occurredAt: readString(source, "occurred_at", path, 64),
+    };
+  });
 }
 
 export function parseCostBreakdown(raw: unknown): CostBreakdown {

@@ -256,7 +256,10 @@ class SpeechTurn:
         if event_type is EventType.PLAYBACK_STARTED and track.index == 0:
             payload["response_to_first_audio_ms"] = self._first_audio_ms or 0
         evidence, turn_id = self._deps.evidence, self._turn_id
-        self._writer.submit(lambda: evidence.event(event_type, turn_id=turn_id, payload=payload))
+        at = self._deps.clock.utc_now()  # when playback happened, not when the write ran
+        self._writer.submit(
+            lambda: evidence.event(event_type, turn_id=turn_id, payload=payload, occurred_at=at)
+        )
 
     # -------------------------------------------------------------- drain --
     def _release(self, item: DrainItem) -> None:

@@ -22,6 +22,8 @@ from voice_agent.contracts.usage import (
 )
 
 MS_PER_SECOND = Decimal(1000)
+# docs/15 §2.2: WebRTC participant minutes = session minutes x 2 (browser + worker).
+WEBRTC_PARTICIPANTS = 2
 
 _STATUS_BY_SOURCE = {
     UsageSource.PROVIDER_REPORTED: UsageReportingStatus.PROVIDER_REPORTED,
@@ -150,3 +152,19 @@ def _dominant_source(sources: set[UsageSource]) -> UsageSource:
     if UsageSource.MEASURED in sources:
         return UsageSource.MEASURED
     return UsageSource.ESTIMATED
+
+
+def transport_usage(*, connected_ms: int, participants: int = WEBRTC_PARTICIPANTS) -> UsageReport:
+    """Derived WebRTC participant time for one session (docs/15 §2.2, §5.3).
+
+    The worker measures its own connected media time; every participant is
+    assumed connected for the same span, so the quantity is ``derived``
+    (evidence status ``estimated``), never provider-reported.
+    """
+    if connected_ms < 0 or participants < 1:
+        raise UsageNormalizationError("transport usage needs a non-negative span and participants")
+    seconds = Decimal(connected_ms) / MS_PER_SECOND * participants
+    return _report(
+        [_item(UsageUnit.TRANSPORT_SESSION_SECONDS, seconds, UsageSource.DERIVED)],
+        UsageSource.DERIVED,
+    )

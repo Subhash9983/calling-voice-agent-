@@ -90,7 +90,10 @@ async def list_operations(
 async def list_errors(
     runtime: RuntimeDep, session_id: SessionId, params: Annotated[ErrorListParams, Query()]
 ) -> ListEnvelope[ErrorItem]:
-    await reads.unavailable_session_diagnostic(runtime, session_id, "Error diagnostics")
+    page = await reads.list_errors(runtime, session_id, params)
+    return ListEnvelope(
+        items=page.items, next_cursor=page.next_cursor, request_id=current_request_id()
+    )
 
 
 @router.get(f"{_SESSION}/costs", tags=["diagnostics"])

@@ -13,8 +13,10 @@ import {
   TRANSCRIBED_AUDIO_SECONDS,
   TTS_COMPONENT,
   type CostBreakdown,
+  type ErrorItemView,
   type OperationView,
 } from "../contracts/diagnosticsApi";
+import type { DisconnectReason, LatencyMetricView, LatencySummaryView, SessionStatus } from "../contracts/sessionApi";
 
 export interface SttOperationsSummary {
   readonly count: number;
@@ -55,6 +57,79 @@ export interface TtsCostSummary {
   readonly calculationStatus: string;
 }
 
+/** A safe error code grouping, never raw provider error text (docs/04 §13). */
+export interface ErrorCodeCount {
+  readonly component: string;
+  readonly errorType: string;
+  readonly count: number;
+}
+
+/**
+ * How the session ended: known locally (what the browser requested/observed)
+ * plus the safe error evidence (docs/04 §13). `errorCount` is `null`, never
+ * zero, when the `/errors` fetch itself failed or has not run yet.
+ */
+export interface SessionOutcomeSummary {
+  readonly status: SessionStatus;
+  readonly disconnectReason: DisconnectReason | null;
+  readonly errorCount: number | null;
+  readonly errorCodes: readonly ErrorCodeCount[];
+}
+
+export function summarizeOutcome(
+  session: { readonly status: SessionStatus; readonly disconnectReason: DisconnectReason | null },
+  errors: readonly ErrorItemView[] | null,
+): SessionOutcomeSummary {
+  if (errors === null) {
+    return {
+      status: session.status,
+      disconnectReason: session.disconnectReason,
+      errorCount: null,
+      errorCodes: [],
+    };
+  }
+  const counts = new Map<string, ErrorCodeCount>();
+  for (const error of errors) {
+    const key = `${error.component}:${error.errorType}`;
+    const existing = counts.get(key);
+    counts.set(key, {
+      component: error.component,
+      errorType: error.errorType,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return {
+    status: session.status,
+    disconnectReason: session.disconnectReason,
+    errorCount: errors.length,
+    errorCodes: Array.from(counts.values()),
+  };
+}
+
+/** One row of the latency breakdown; `metric` is `null` when that stage is not available yet. */
+export interface LatencyStageSummary {
+  readonly key: string;
+  readonly label: string;
+  readonly metric: LatencyMetricView | null;
+}
+
+const LATENCY_STAGES: readonly { readonly key: keyof LatencySummaryView; readonly label: string }[] = [
+  { key: "sttFinalization", label: "STT finalization" },
+  { key: "llmFirstToken", label: "LLM first token" },
+  { key: "ttsFirstAudio", label: "TTS first audio" },
+  { key: "firstAudibleResponse", label: "First audible response" },
+  { key: "completeTurn", label: "Complete turn" },
+  { key: "interruption", label: "Interruption" },
+];
+
+/** Not available yet (never fabricated) when the summary itself is absent. */
+export function summarizeLatency(latency: LatencySummaryView | null): readonly LatencyStageSummary[] {
+  if (latency === null) {
+    return LATENCY_STAGES.map((stage) => ({ key: stage.key, label: stage.label, metric: null }));
+  }
+  return LATENCY_STAGES.map((stage) => ({ key: stage.key, label: stage.label, metric: latency[stage.key] }));
+}
+
 export type EvidenceState =
   | { readonly status: "idle" }
   | {
@@ -65,6 +140,8 @@ export type EvidenceState =
       readonly conversationCost?: ConversationCostSummary | null;
       readonly tts?: TtsOperationsSummary | null;
       readonly ttsCost?: TtsCostSummary | null;
+      readonly outcome: SessionOutcomeSummary;
+      readonly latency: readonly LatencyStageSummary[];
     };
 
 export const NO_EVIDENCE: EvidenceState = { status: "idle" };

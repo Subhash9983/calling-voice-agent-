@@ -195,6 +195,47 @@ describe("createControlApiClient", () => {
     expect(lastCall(fetchMock).url).toBe(`${BASE}/sessions/${SESSION_ID}/events?limit=50`);
   });
 
+  it("lists safe error diagnostics", async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          {
+            error_id: "err-1",
+            component: "stt",
+            error_type: "provider_timeout",
+            category: "transient",
+            severity: "error",
+            retryable: true,
+            recovered: true,
+            user_affected: false,
+            safe_message: "The speech recognizer timed out and recovered.",
+            occurred_at: "2026-09-29T10:00:02Z",
+          },
+        ],
+        next_cursor: null,
+        request_id: "r",
+      }),
+    );
+
+    const errors = await clientWith(fetchMock).listErrors(SESSION_ID, 10);
+
+    expect(errors).toEqual([
+      {
+        errorId: "err-1",
+        component: "stt",
+        errorType: "provider_timeout",
+        category: "transient",
+        severity: "error",
+        retryable: true,
+        recovered: true,
+        userAffected: false,
+        safeMessage: "The speech recognizer timed out and recovered.",
+        occurredAt: "2026-09-29T10:00:02Z",
+      },
+    ]);
+    expect(lastCall(fetchMock).url).toBe(`${BASE}/sessions/${SESSION_ID}/errors?limit=10`);
+  });
+
   it("lists agent configs", async () => {
     const client = clientWith(
       vi.fn<FetchLike>().mockResolvedValue(

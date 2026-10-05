@@ -2,9 +2,9 @@
 
 Every listing requests ``limit + 1`` items to decide ``next_cursor`` and
 uses the approved cursor (newest-first timestamp/ID for sessions, sequence
-number for turns/events, timestamp/ID for operations). Error diagnostics
-have no durable read model yet and return the explicit safe not-ready state;
-costs are served from ``cost_entries`` when the store is available (WP7).
+number for turns/events, timestamp/ID for operations and errors). Session
+summaries, error diagnostics, and cost breakdowns are derived from the stored
+evidence (WP11); a missing store keeps the explicit safe not-ready state.
 """
 
 from __future__ import annotations
@@ -12,13 +12,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import NoReturn
 
+from voice_agent.contracts.enums import OperationStatus
 from voice_agent.control_api.cursors import (
+    decode_error_cursor,
     decode_operation_cursor,
     decode_sequence_cursor,
     decode_session_cursor,
     encode_cursor,
+    encode_error_cursor,
     encode_operation_cursor,
     encode_session_cursor,
 )
@@ -26,6 +28,7 @@ from voice_agent.control_api.errors import dependency_unavailable, not_found
 from voice_agent.control_api.projections import (
     agent_config_view,
     cost_breakdown,
+    error_item,
     event_item,
     operation_item,
     session_list_item,
@@ -34,7 +37,10 @@ from voice_agent.control_api.projections import (
 )
 from voice_agent.control_api.runtime import ControlPlaneRuntime
 from voice_agent.control_api.schemas.diagnostics import (
+    MAX_DIAGNOSTIC_PAGE,
     CostBreakdownView,
+    ErrorItem,
+    ErrorListParams,
     EventItem,
     EventListParams,
     OperationItem,
@@ -50,10 +56,22 @@ from voice_agent.control_api.schemas.sessions import (
     SessionView,
 )
 from voice_agent.control_api.services.common import config_name, load_session
-from voice_agent.ports.control_plane import EventQuery, OperationQuery, SessionListQuery
+from voice_agent.costing.rate_card import rate_card_by_id
+from voice_agent.domain.error_event import ErrorEventRecord
+from voice_agent.events_and_latency.evidence_loader import EvidenceSources, load_session_evidence
+from voice_agent.events_and_latency.evidence_types import SessionEvidence
+from voice_agent.events_and_latency.session_evidence import build_session_evidence
+from voice_agent.ports.control_plane import (
+    EventQuery,
+    OperationCursor,
+    OperationQuery,
+    SessionListQuery,
+)
 
 TURNS_CURSOR = "turns"
 EVENTS_CURSOR = "events"
+# Successful attempts scanned to mark listed errors as recovered (5 x 100).
+MAX_RECOVERY_PAGES = 5
 DIAGNOSTIC_NOT_AVAILABLE = "{what} are not available in this build."
 COSTS_NOT_CALCULATED = "No cost calculation is available for this session yet."
 
@@ -85,9 +103,26 @@ async def get_agent_config(runtime: ControlPlaneRuntime, agent_config_id: str) -
     return agent_config_view(config)
 
 
+def _sources(runtime: ControlPlaneRuntime) -> EvidenceSources:
+    stores = runtime.require_stores()
+    return EvidenceSources(
+        sessions=stores.sessions, timeline=stores.timeline, costs=stores.costs, errors=stores.errors
+    )
+
+
+async def session_evidence(runtime: ControlPlaneRuntime, session_id: str) -> SessionEvidence:
+    """Bounded reconstruction of one session from its stored evidence (WP11)."""
+    data = await load_session_evidence(_sources(runtime), session_id, bound=runtime.bounded)
+    if data is None:
+        raise not_found("The requested session was not found.")
+    card = rate_card_by_id(data.session.cost_rate_card_version)
+    return build_session_evidence(data, card=card)
+
+
 async def get_session(runtime: ControlPlaneRuntime, session_id: str) -> SessionView:
     record = await load_session(runtime, session_id)
-    return session_view(record, await config_name(runtime, record.agent_config_id))
+    evidence = await session_evidence(runtime, session_id)
+    return session_view(record, await config_name(runtime, record.agent_config_id), evidence)
 
 
 async def list_sessions(
@@ -188,12 +223,53 @@ async def get_cost_breakdown(runtime: ControlPlaneRuntime, session_id: str) -> C
     lines = await runtime.bounded(reader.latest_session_run(session_id))
     if not lines:
         raise dependency_unavailable(COSTS_NOT_CALCULATED, retryable=True)
-    return cost_breakdown(lines)
+    evidence = await session_evidence(runtime, session_id)
+    return cost_breakdown(lines, evidence.cost.components)
 
 
-async def unavailable_session_diagnostic(
-    runtime: ControlPlaneRuntime, session_id: str, what: str
-) -> NoReturn:
-    """Explicit safe not-ready state for diagnostics without a read model yet."""
+async def list_errors(
+    runtime: ControlPlaneRuntime, session_id: str, params: ErrorListParams
+) -> Page[ErrorItem]:
+    """Safe ``error_events`` diagnostics, oldest first (docs/04 §13)."""
     await load_session(runtime, session_id)
-    raise dependency_unavailable(DIAGNOSTIC_NOT_AVAILABLE.format(what=what), retryable=False)
+    reader = runtime.require_stores().errors
+    if reader is None:
+        raise dependency_unavailable(
+            DIAGNOSTIC_NOT_AVAILABLE.format(what="Error diagnostics"), retryable=False
+        )
+    after = decode_error_cursor(params.cursor)
+    records = await runtime.bounded(
+        reader.list_session_errors(session_id, limit=params.limit + 1, after=after)
+    )
+    rows, more = _split(records, params.limit)
+    recovered = await _recovered_requests(runtime, session_id, rows)
+    last = rows[-1] if rows else None
+    cursor = (
+        encode_error_cursor(last.occurred_at, last.error_id) if more and last is not None else None
+    )
+    return Page(items=tuple(error_item(row, recovered) for row in rows), next_cursor=cursor)
+
+
+async def _recovered_requests(
+    runtime: ControlPlaneRuntime, session_id: str, rows: Sequence[ErrorEventRecord]
+) -> frozenset[str]:
+    """Logical requests of the listed errors that a later attempt completed (bounded)."""
+    wanted = {row.logical_request_id for row in rows if row.logical_request_id is not None}
+    found: set[str] = set()
+    after: OperationCursor | None = None
+    timeline = runtime.require_stores().timeline
+    for _page in range(MAX_RECOVERY_PAGES):
+        if not wanted - found:
+            break
+        query = OperationQuery(
+            session_id=session_id,
+            limit=MAX_DIAGNOSTIC_PAGE,
+            after=after,
+            status=OperationStatus.SUCCEEDED,
+        )
+        views = await runtime.bounded(timeline.list_operations(query))
+        found.update(v.operation.logical_request_id for v in views)
+        if len(views) < MAX_DIAGNOSTIC_PAGE:
+            break
+        after = OperationCursor(views[-1].created_at, views[-1].operation.operation_id)
+    return frozenset(wanted & found)

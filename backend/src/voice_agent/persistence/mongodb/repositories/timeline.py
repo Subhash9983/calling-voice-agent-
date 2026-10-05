@@ -9,6 +9,7 @@ bounded pages on the approved session/sequence and session/time indexes.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Final
 
 from voice_agent.domain.operation import ProviderOperation
@@ -32,6 +33,7 @@ from voice_agent.persistence.mongodb.repositories.base import (
     build,
     encode,
     parse,
+    scheduled,
 )
 from voice_agent.persistence.mongodb.repositories.events import list_event_records
 from voice_agent.ports.clock import Clock
@@ -99,20 +101,12 @@ class _RevisionedWriter(MongoRepository):
             raise RevisionConflictError("stale or mismatched child revision")
         return False
 
-    async def _insert(self, encoded: Document) -> None:
+    async def _insert(self, encoded: Document, anchor: datetime | None = None) -> None:
         try:
             async with translate_errors():
-                await self.collection(self.collection_name).insert_one(encoded)
+                await self.collection(self.collection_name).insert_one(scheduled(encoded, anchor))
         except IndexedDuplicateKeyError:
             raise RevisionConflictError("concurrent child insert") from None
-
-    async def _require_session(self, session_id: str) -> None:
-        async with translate_errors():
-            found = await self.collection(Collection.VOICE_SESSIONS).count_documents(
-                {"session_id": session_id}, limit=1
-            )
-        if not found:
-            raise ReferenceNotFoundError("the parent session does not exist")
 
 
 class MongoTurnRepository(_RevisionedWriter):
@@ -139,8 +133,8 @@ class MongoTurnRepository(_RevisionedWriter):
         encoded = encode(document)
         if await self._save(turn.turn_id, turn.status_revision, encoded):
             return
-        await self._require_session(turn.session_id)
-        await self._insert(encoded)
+        anchor = await self.require_session_anchor(turn.session_id)
+        await self._insert(encoded, anchor)
 
     async def list_for_session(self, session_id: str) -> Sequence[ConversationTurn]:
         async with translate_errors():
@@ -184,10 +178,10 @@ class MongoOperationRepository(_RevisionedWriter):
         encoded = encode(document)
         if await self._save(operation.operation_id, operation.status_revision, encoded):
             return
-        await self._require_session(operation.session_id)
+        anchor = await self.require_session_anchor(operation.session_id)
         if operation.turn_id is not None:
             await self._require_turn(operation.session_id, operation.turn_id)
-        await self._insert(encoded)
+        await self._insert(encoded, anchor)
 
     async def _require_turn(self, session_id: str, turn_id: str) -> None:
         async with translate_errors():

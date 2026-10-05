@@ -6,10 +6,12 @@
  * normalized client error, never a runtime crash deeper in the UI.
  */
 import {
+  isRecord,
   readArray,
   readBoolean,
   readNumber,
   readOneOf,
+  readOptionalNumber,
   readOptionalOneOf,
   readOptionalString,
   readRecord,
@@ -112,11 +114,36 @@ export interface SessionEventItem {
   readonly occurredAt: string;
 }
 
+/** Bounded per-stage timing (docs/02 §12; populated once the worker reports it). */
+export interface LatencyMetricView {
+  readonly sampleCount: number;
+  readonly averageMs: number;
+  readonly p50Ms: number;
+  readonly p95Ms: number;
+  readonly maximumMs: number;
+}
+
+/**
+ * Stage/end-to-end latency summary (docs/04 §8, §17; docs/02 §12). Every
+ * stage is `null` until its metric is fully available; a half-populated
+ * metric is never surfaced.
+ */
+export interface LatencySummaryView {
+  readonly sttFinalization: LatencyMetricView | null;
+  readonly llmFirstToken: LatencyMetricView | null;
+  readonly ttsFirstAudio: LatencyMetricView | null;
+  readonly firstAudibleResponse: LatencyMetricView | null;
+  readonly completeTurn: LatencyMetricView | null;
+  readonly interruption: LatencyMetricView | null;
+}
+
 export interface SessionSummary {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly agentActivityState: AgentActivityState | null;
   readonly disconnectReason: DisconnectReason | null;
+  /** Absent/null until the worker populates it (WP11); never fabricated. */
+  readonly latencySummary?: LatencySummaryView | null;
 }
 
 export function parseAgentConfig(raw: unknown, path = "agent_config"): AgentConfigView {
@@ -201,6 +228,37 @@ export function parseEndSession(raw: unknown): EndSessionResult {
   };
 }
 
+/** A metric is reported only when every one of its bounded fields is present. */
+function parseLatencyMetric(raw: unknown): LatencyMetricView | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const sampleCount = readOptionalNumber(raw, "sample_count");
+  const averageMs = readOptionalNumber(raw, "average_ms");
+  const p50Ms = readOptionalNumber(raw, "p50_ms");
+  const p95Ms = readOptionalNumber(raw, "p95_ms");
+  const maximumMs = readOptionalNumber(raw, "maximum_ms");
+  if (sampleCount === null || averageMs === null || p50Ms === null || p95Ms === null || maximumMs === null) {
+    return null;
+  }
+  return { sampleCount, averageMs, p50Ms, p95Ms, maximumMs };
+}
+
+/** Tolerant: an absent/null summary, or an absent stage within it, is "not available yet". */
+export function parseLatencySummary(raw: unknown): LatencySummaryView | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  return {
+    sttFinalization: parseLatencyMetric(raw["stt_finalization"]),
+    llmFirstToken: parseLatencyMetric(raw["llm_first_token"]),
+    ttsFirstAudio: parseLatencyMetric(raw["tts_first_audio"]),
+    firstAudibleResponse: parseLatencyMetric(raw["first_audible_response"]),
+    completeTurn: parseLatencyMetric(raw["complete_turn"]),
+    interruption: parseLatencyMetric(raw["interruption"]),
+  };
+}
+
 export function parseSessionSummary(raw: unknown): SessionSummary {
   const envelope = readRecord(raw, "response");
   const data = readRecord(envelope["data"], "data");
@@ -214,6 +272,7 @@ export function parseSessionSummary(raw: unknown): SessionSummary {
       AGENT_ACTIVITY_STATES,
     ),
     disconnectReason: readOptionalOneOf(data, "disconnect_reason", "data", DISCONNECT_REASONS),
+    latencySummary: parseLatencySummary(data["latency_summary"]),
   };
 }
 

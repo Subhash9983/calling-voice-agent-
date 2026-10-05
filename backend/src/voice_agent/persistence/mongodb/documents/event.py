@@ -33,7 +33,11 @@ from voice_agent.domain.records_common import (
     bounded_container,
 )
 from voice_agent.ports.control_plane import EventRecord
-from voice_agent.privacy_and_retention.expiry import EventRetentionClass
+from voice_agent.privacy_and_retention.expiry import (
+    SESSION_CLEANUP_EVENT_CLASSES,
+    EventRetentionClass,
+    session_expires_at,
+)
 
 EVENT_DOCUMENT_SCHEMA_VERSION: Final = 1
 PAYLOAD_SCHEMA_VERSION: Final = 1
@@ -137,12 +141,23 @@ def retention_class_for(category: EventCategory) -> EventRetentionClass:
 
 
 def event_document(
-    record: EventRecord, *, sequence_number: int, context: EventWriteContext
+    record: EventRecord,
+    *,
+    sequence_number: int,
+    context: EventWriteContext,
+    retention_anchor: datetime | None = None,
 ) -> SessionEventDocument:
+    """``retention_anchor`` (a terminal session's ``ended_at``) schedules ordinary classes."""
     envelope = record.envelope
     category = envelope.category
     if category is None:
         raise ValueError("only durable event types are persisted")
+    retention_class = retention_class_for(category)
+    expires_at = (
+        session_expires_at(retention_anchor)
+        if retention_anchor is not None and retention_class in SESSION_CLEANUP_EVENT_CLASSES
+        else None
+    )
     provider = (
         None
         if envelope.provider is None
@@ -173,7 +188,8 @@ def event_document(
         provider_context=provider,
         payload=envelope.payload or None,
         environment=context.environment,
-        retention_class=retention_class_for(category),
+        retention_class=retention_class,
+        expires_at=expires_at,
     )
 
 

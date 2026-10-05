@@ -39,6 +39,7 @@ from voice_agent.persistence.control_plane_memory import (
 from voice_agent.persistence.in_memory import InMemoryEventSequenceAllocator
 from voice_agent.persistence.mongodb.client import MongoPersistence
 from voice_agent.persistence.mongodb.repositories.cost_entries import MongoCostEntryStore
+from voice_agent.persistence.mongodb.repositories.errors import MongoErrorEventStore
 from voice_agent.persistence.mongodb.repositories.leases import (
     MongoSessionReconciliationRepository,
     MongoWorkerLeaseRepository,
@@ -52,6 +53,7 @@ from voice_agent.ports.clock import Clock, IdGenerator
 from voice_agent.ports.control_plane import (
     AgentConfigCatalog,
     CostReader,
+    ErrorReader,
     FeedbackRepository,
     SessionEventLog,
     SessionRecordRepository,
@@ -97,6 +99,8 @@ class ControlPlaneStores:
     recovery: WorkerRecoveryRepository | None = None
     # ``cost_entries`` reads (WP7); absent -> the cost diagnostic stays not-ready.
     costs: CostReader | None = None
+    # ``error_events`` reads (WP11); absent -> the error diagnostic stays not-ready.
+    errors: ErrorReader | None = None
 
 
 def in_memory_stores() -> ControlPlaneStores:
@@ -126,6 +130,7 @@ def mongo_stores(persistence: MongoPersistence, settings: BootstrapSettings) -> 
         leases=MongoWorkerLeaseRepository(persistence),
         recovery=MongoWorkerRecoveryRepository(persistence),
         costs=MongoCostEntryStore(persistence),
+        errors=MongoErrorEventStore(persistence),
     )
 
 

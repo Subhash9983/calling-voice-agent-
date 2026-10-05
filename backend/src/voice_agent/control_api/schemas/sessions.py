@@ -8,7 +8,12 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from voice_agent.contracts.base import CanonicalId
-from voice_agent.contracts.enums import AgentActivityState, DisconnectReason, SessionStatus
+from voice_agent.contracts.enums import (
+    AgentActivityState,
+    CalculationStatus,
+    DisconnectReason,
+    SessionStatus,
+)
 from voice_agent.control_api.schemas.common import ApiModel, Cursor, IsoUtcTimestamp
 
 DEFAULT_SESSION_PAGE = 25
@@ -132,16 +137,26 @@ class LanguageSummaryView(ApiModel):
 
 
 class CostSummaryView(ApiModel):
+    """Derived from the latest session-scope cost run (any status; WP11).
+
+    ``estimated_total_usd`` is ``None`` while nothing is priced; a ``partial``
+    status means some attempt's usage or rate is unavailable (never zero).
+    """
+
     currency: str
     rate_card_version: str | None
-    calculation_status: Literal["unavailable"]
+    calculation_status: CalculationStatus
+    calculation_run_id: str | None = None
+    estimated_total_usd: str | None = None
+    reconciled: bool | None = None
 
 
 class SessionView(ApiModel):
     """Browser-safe session summary; transcripts and provider diagnostics excluded.
 
-    ``turn_summary``/``error_summary``/``latency_summary`` stay ``null`` until
-    the worker populates them (WP10/WP11); unavailable values are never zero.
+    ``turn_summary``/``error_summary``/``latency_summary`` are derived from the
+    stored child records (docs/02 §6); a metric without samples is omitted
+    and unavailable values are never zero.
     """
 
     session_id: str
@@ -161,7 +176,7 @@ class SessionView(ApiModel):
     disconnect_reason: DisconnectReason | None
     turn_summary: dict[str, int] | None = None
     error_summary: dict[str, int] | None = None
-    latency_summary: dict[str, dict[str, float]] | None = None
+    latency_summary: dict[str, dict[str, int | float]] | None = None
     cost_summary: CostSummaryView
 
 

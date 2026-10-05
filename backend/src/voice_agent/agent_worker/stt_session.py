@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import logging
 import random
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final
 
 from pydantic import SecretStr
 
@@ -27,17 +26,13 @@ from voice_agent.contracts.cost import RateCard
 from voice_agent.contracts.enums import OperationComponent
 from voice_agent.contracts.policies import RetryPolicy
 from voice_agent.contracts.stt import SttStreamConfig
-from voice_agent.costing.rate_card import (
-    PHASE0_PROMO_RATE_CARD_ID,
-    PHASE0_RATE_CARD_ID,
-    phase0_promotional_rate_card,
-    phase0_rate_card,
-)
+from voice_agent.costing.rate_card import phase0_rate_card, rate_card_by_id
 from voice_agent.domain.agent_config import AgentConfig, SttSection
 from voice_agent.orchestration.retry import backoff_ms
 from voice_agent.persistence.mongodb.client import MongoPersistence
 from voice_agent.persistence.mongodb.documents.timeline import WriteContext
 from voice_agent.persistence.mongodb.repositories.cost_entries import MongoCostEntryStore
+from voice_agent.persistence.mongodb.repositories.errors import MongoErrorEventStore
 from voice_agent.persistence.mongodb.repositories.timeline import (
     MongoOperationRepository,
     MongoTurnRepository,
@@ -54,10 +49,6 @@ from voice_agent.stt_adapters.deepgram.connection import DeepgramConnector
 from voice_agent.stt_adapters.deepgram.options import DEEPGRAM_PROVIDER
 from voice_agent.stt_adapters.deepgram.sdk_binding import SdkDeepgramConnector
 
-_RATE_CARDS: Final[Mapping[str, Callable[[], RateCard]]] = {
-    PHASE0_RATE_CARD_ID: phase0_rate_card,
-    PHASE0_PROMO_RATE_CARD_ID: phase0_promotional_rate_card,
-}
 _LOGGER = logging.getLogger("voice_agent.agent_worker.stt")
 
 
@@ -83,8 +74,8 @@ def stt_stream_config(section: SttSection) -> SttStreamConfig:
 
 
 def rate_card_for(config: AgentConfig) -> RateCard | None:
-    factory = _RATE_CARDS.get(config.cost_rate_card_version)
-    return None if factory is None else factory()
+    """The exact dated card the configuration names (versioned lookup, docs/15 §13)."""
+    return rate_card_by_id(config.cost_rate_card_version)
 
 
 def jittered_backoff(policy: RetryPolicy) -> Callable[[int], int]:
@@ -111,16 +102,17 @@ class SttSessionDeps:
 
 def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) -> SttEvidence:
     record, config = admission.record, admission.config
+    adapter_versions = {
+        OperationComponent.STT: config.stt.adapter_version,
+        OperationComponent.CONVERSATION_ENGINE: config.conversation_engine.adapter_version,
+        OperationComponent.TTS: config.tts.adapter_version,
+    }
     write = WriteContext(
         session_id=record.session_id,
         correlation_id=record.correlation_id,
         agent_config_id=record.agent_config_id,
         environment=record.environment,
-        adapter_versions={
-            OperationComponent.STT: config.stt.adapter_version,
-            OperationComponent.CONVERSATION_ENGINE: config.conversation_engine.adapter_version,
-            OperationComponent.TTS: config.tts.adapter_version,
-        },
+        adapter_versions=adapter_versions,
     )
     card = rate_card_for(config)
     costs: CostRunWriter | None = None if card is None else MongoCostEntryStore(deps.persistence)
@@ -133,6 +125,8 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
             agent_config_id=record.agent_config_id,
             environment=record.environment,
             worker_generation=generation,
+            adapter_versions=adapter_versions,
+            transport_provider=config.transport.provider,
         ),
         turns=MongoTurnRepository(deps.persistence, context=write, clock=deps.clock),
         operations=MongoOperationRepository(deps.persistence, context=write, clock=deps.clock),
@@ -141,6 +135,7 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
         rate_card=card or phase0_rate_card(),
         clock=deps.clock,
         ids=deps.ids,
+        errors=MongoErrorEventStore(deps.persistence),
     )
 
 

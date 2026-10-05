@@ -477,7 +477,12 @@ Commands/jobs may:
 - seed non-secret agent configurations;
 - verify schema versions and data consistency;
 - dry-run versioned migrations;
-- execute scoped retention/deletion verification.
+- execute scoped retention/deletion verification;
+- produce a bounded, read-only local operational report (`report`, default 20 sessions,
+  max 100, optional `--session-id`) and a retention-evidence report (`retention-report`,
+  what is scheduled, what is due, and any child record still missing an `expires_at`),
+  both WP11 deliverables; `--output` writes a new file and never overwrites, and no
+  report data leaves the machine.
 
 The session reconciler is not a `maintenance` command; it runs as a `control_api` background task (§5).
 

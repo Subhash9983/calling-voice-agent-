@@ -152,6 +152,8 @@ class CostLine(StrictModel):
     converted_cost: FiniteDecimal
     evidence_status: EvidenceStatus
     estimated: bool
+    # The dated meter's basis, e.g. LiveKit ``included_allowance`` (a known zero).
+    pricing_basis: PricingBasis = PricingBasis.PER_UNIT
 
 
 class MissingCost(StrictModel):

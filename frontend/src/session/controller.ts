@@ -11,7 +11,7 @@ import { ApiError, type ControlApiClient } from "../api";
 import { watchDeviceLoss, type MicrophoneResult } from "../audio/microphone";
 import { playbackPayload, type ClientEventInput, type ClientEventType } from "../contracts/realtime";
 import { CONVERSATION_COMPONENT, STT_COMPONENT, TTS_COMPONENT } from "../contracts/diagnosticsApi";
-import type { DisconnectReason, TransportJoin } from "../contracts/sessionApi";
+import type { DisconnectReason, SessionStatus, SessionSummary, TransportJoin } from "../contracts/sessionApi";
 import type {
   ClientEventOutcome,
   DisconnectCause,
@@ -23,10 +23,18 @@ import {
   summarizeConversationCost,
   summarizeConversationOperations,
   summarizeCost,
+  summarizeLatency,
   summarizeOperations,
+  summarizeOutcome,
   summarizeTtsCost,
   summarizeTtsOperations,
 } from "./evidence";
+
+/** What the browser knows about how the session ended, before safe error evidence is folded in. */
+interface KnownOutcome {
+  readonly status: SessionStatus;
+  readonly disconnectReason: DisconnectReason | null;
+}
 import { PlaybackAckTracker } from "./playbackAcks";
 import {
   INITIAL_SESSION_STATE,
@@ -302,12 +310,13 @@ export class VoiceSessionController {
     if (sessionId === null) {
       return false;
     }
-    let status: string;
+    let summary: SessionSummary;
     try {
-      status = (await this.deps.api.getSession(sessionId)).status;
+      summary = await this.deps.api.getSession(sessionId);
     } catch {
       return false;
     }
+    const status = summary.status;
     if (status !== "ended" && status !== "failed") {
       return false;
     }
@@ -315,7 +324,7 @@ export class VoiceSessionController {
     this.acks.dispose();
     this.releaseMicrophone();
     await this.transport?.disconnect().catch(() => undefined);
-    await this.loadDiagnostics(sessionId);
+    await this.loadDiagnostics(sessionId, { status, disconnectReason: summary.disconnectReason });
     if (status === "ended") {
       this.dispatch({ type: "phase", phase: "ended" });
     } else {
@@ -358,7 +367,11 @@ export class VoiceSessionController {
       failure = describeError(error, "The session could not be ended cleanly.");
     }
     await this.transport?.disconnect().catch(() => undefined);
-    await this.loadDiagnostics(sessionId);
+    // The accepted end request is the best locally-known outcome; the durable
+    // record (and any safe error evidence) is folded in by `loadEvidence`.
+    const outcome: KnownOutcome =
+      failure === null ? { status: "ended", disconnectReason: reason } : { status: "failed", disconnectReason: null };
+    await this.loadDiagnostics(sessionId, outcome);
     if (failure === null) {
       this.dispatch({ type: "phase", phase: "ended" });
     } else {
@@ -454,19 +467,23 @@ export class VoiceSessionController {
     this.dispatch({ type: "mic_released" });
   }
 
-  private async loadDiagnostics(sessionId: string): Promise<void> {
-    await Promise.all([this.loadEvents(sessionId), this.loadEvidence(sessionId)]);
+  private async loadDiagnostics(sessionId: string, outcome: KnownOutcome): Promise<void> {
+    await Promise.all([this.loadEvents(sessionId), this.loadEvidence(sessionId, outcome)]);
   }
 
   /** Best-effort: any failure (including a 503 not-ready) is a neutral "not available". */
-  private async loadEvidence(sessionId: string): Promise<void> {
-    const [operations, conversationOperations, ttsOperations, costs] = await Promise.allSettled([
+  private async loadEvidence(sessionId: string, outcome: KnownOutcome): Promise<void> {
+    const [operations, conversationOperations, ttsOperations, costs, errors, session] = await Promise.allSettled([
       this.deps.api.listOperations(sessionId, { component: STT_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.listOperations(sessionId, { component: CONVERSATION_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.listOperations(sessionId, { component: TTS_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.getCosts(sessionId),
+      this.deps.api.listErrors(sessionId, EVIDENCE_LIMIT),
+      this.deps.api.getSession(sessionId),
     ]);
     const costsValue = costs.status === "fulfilled" ? costs.value : null;
+    const errorsValue = errors.status === "fulfilled" ? errors.value : null;
+    const latencySummary = session.status === "fulfilled" ? (session.value.latencySummary ?? null) : null;
     this.dispatch({
       type: "evidence_loaded",
       evidence: {
@@ -480,6 +497,8 @@ export class VoiceSessionController {
         conversationCost: costsValue === null ? null : summarizeConversationCost(costsValue),
         tts: ttsOperations.status === "fulfilled" ? summarizeTtsOperations(ttsOperations.value) : null,
         ttsCost: costsValue === null ? null : summarizeTtsCost(costsValue),
+        outcome: summarizeOutcome(outcome, errorsValue),
+        latency: summarizeLatency(latencySummary),
       },
     });
   }

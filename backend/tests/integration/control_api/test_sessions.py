@@ -144,7 +144,9 @@ async def test_fixed_and_canonical_values_are_enforced(api: Api, field: str, val
     assert response.status_code == 422
     fields = [item["field"] for item in response.json()["error"]["field_errors"]]
     assert f"body.{field}" in fields
-    assert str(value) not in response.text
+    # The random request ID may contain the digits of a short value (e.g. 12).
+    echoed = response.text.replace(response.json()["request_id"], "")
+    assert str(value) not in echoed
 
 
 async def test_unknown_field_name_is_not_echoed(api: Api) -> None:

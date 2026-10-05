@@ -62,6 +62,7 @@ export function fakeDeps(mic?: MicrophoneResult): FakeDeps {
     getCosts: vi.fn().mockRejectedValue(
       new ApiError({ code: "DEPENDENCY_UNAVAILABLE", message: "not ready", status: 503, retryable: false }),
     ),
+    listErrors: vi.fn().mockResolvedValue([]),
   };
   const deps: ControllerDeps = {
     api,

@@ -127,7 +127,8 @@ def test_cost_entry_scope_target_and_fx_evidence(session) -> None:  # type: igno
     )
     assert with_fx.currency_conversion.fx_source == "planning-fx"
     assert without.currency_conversion.fx_source == "rate_card_fx"
-    assert estimated.calculation_method == "estimated_tokens_x_public_rate"
+    # An estimated non-token quantity is not labelled as tokens (WP11 label fix).
+    assert estimated.calculation_method == "estimated_quantity_x_public_rate"
 
 
 def test_dataset_lifecycle_rules() -> None:

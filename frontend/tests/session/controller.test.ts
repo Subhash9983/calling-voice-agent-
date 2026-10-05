@@ -58,6 +58,7 @@ function setup(options: { mic?: MicrophoneResult; api?: Partial<ControlApiClient
     listEvents: vi.fn().mockResolvedValue([]),
     listOperations: vi.fn().mockResolvedValue([]),
     getCosts: vi.fn().mockRejectedValue(new Error("not ready")),
+    listErrors: vi.fn().mockResolvedValue([]),
     ...options.api,
   };
   let counter = 0;

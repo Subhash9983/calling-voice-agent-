@@ -11,8 +11,10 @@
  */
 import {
   parseCostBreakdown,
+  parseErrorList,
   parseOperationList,
   type CostBreakdown,
+  type ErrorItemView,
   type OperationView,
 } from "../contracts/diagnosticsApi";
 import {
@@ -65,6 +67,8 @@ export interface ControlApiClient {
   ): Promise<readonly OperationView[]>;
   /** Latest cost calculation; a 503 means "not available yet" (docs/04 §14). */
   getCosts(sessionId: string): Promise<CostBreakdown>;
+  /** Safe error diagnostics (docs/04 §13); empty until error_events exist. */
+  listErrors(sessionId: string, limit?: number): Promise<readonly ErrorItemView[]>;
 }
 
 const defaultFetch: FetchLike = (input, init) => fetch(input, init);
@@ -155,6 +159,13 @@ export function createControlApiClient(options: ControlApiClientOptions): Contro
     },
     getCosts: (sessionId) =>
       request("GET", `/sessions/${encodeURIComponent(sessionId)}/costs`, undefined, parseCostBreakdown),
+    listErrors: (sessionId, limit = 100) =>
+      request(
+        "GET",
+        `/sessions/${encodeURIComponent(sessionId)}/errors?limit=${String(limit)}`,
+        undefined,
+        parseErrorList,
+      ),
   };
 }
 

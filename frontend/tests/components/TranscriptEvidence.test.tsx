@@ -376,3 +376,136 @@ describe("speech synthesis summary", () => {
     expect(within(panel).queryByRole("alert")).toBeNull();
   });
 });
+
+describe("session outcome", () => {
+  it("is neutral before the session ends", async () => {
+    await live();
+    const panel = screen.getByRole("region", { name: "Session outcome" });
+    expect(panel.textContent).toContain("Shown after the session ends");
+  });
+
+  it("shows the final status, end reason and error count after the session ends", async () => {
+    await live();
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Session outcome" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Final status").nextElementSibling?.textContent).toBe("Ended");
+    });
+    expect(within(panel).getByText("End reason").nextElementSibling?.textContent).toBe("User ended");
+    expect(within(panel).getByText("Errors recorded").nextElementSibling?.textContent).toBe("0");
+    expect(within(panel).queryByRole("alert")).toBeNull();
+  });
+
+  it("lists safe error codes and counts, never a raw provider message", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.listErrors).mockResolvedValue([
+      {
+        errorId: "e1",
+        component: "stt",
+        errorType: "provider_timeout",
+        category: "transient",
+        severity: "error",
+        retryable: true,
+        recovered: true,
+        userAffected: false,
+        safeMessage: "raw provider exception text should never reach the panel",
+        occurredAt: "2026-09-29T10:00:02Z",
+      },
+    ]);
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Session outcome" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Errors recorded").nextElementSibling?.textContent).toBe("1");
+    });
+    expect(panel.textContent).toContain("Stt / Provider timeout (1)");
+    expect(panel.textContent).not.toContain("raw provider exception text");
+  });
+
+  it("shows errors recorded as not available (never zero) when the errors fetch fails", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.listErrors).mockRejectedValue(new Error("boom"));
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Session outcome" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Errors recorded").nextElementSibling?.textContent).toBe("Not available yet");
+    });
+    expect(within(panel).queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("latency summary", () => {
+  it("is neutral before the session ends", async () => {
+    await live();
+    const panel = screen.getByRole("region", { name: "Latency summary" });
+    expect(panel.textContent).toContain("Shown after the session ends");
+  });
+
+  it("shows every stage as not available when the session has not reported latency yet", async () => {
+    await live();
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Latency summary" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Complete turn").nextElementSibling?.textContent).toBe("Not available yet");
+    });
+    expect(within(panel).getByText("STT finalization").nextElementSibling?.textContent).toBe("Not available yet");
+    expect(within(panel).queryByRole("alert")).toBeNull();
+  });
+
+  it("shows an available stage once the session reports it", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.getSession).mockResolvedValue({
+      sessionId: "sess-1",
+      status: "ended",
+      agentActivityState: null,
+      disconnectReason: "user_ended",
+      latencySummary: {
+        sttFinalization: null,
+        llmFirstToken: null,
+        ttsFirstAudio: null,
+        firstAudibleResponse: null,
+        completeTurn: { sampleCount: 3, averageMs: 820, p50Ms: 800, p95Ms: 950, maximumMs: 1000 },
+        interruption: null,
+      },
+    });
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Latency summary" });
+    await waitFor(() => {
+      expect(within(panel).getByText("Complete turn").nextElementSibling?.textContent).toContain("n=3");
+    });
+  });
+});
+
+describe("combined evidence report coherence", () => {
+  it("wraps every evidence subsection inside one named report region", async () => {
+    await live();
+    const report = screen.getByRole("region", { name: "Session evidence" });
+    for (const name of [
+      "Session outcome",
+      "Speech recognition summary",
+      "Conversation engine summary",
+      "Speech synthesis summary",
+      "Latency summary",
+    ]) {
+      expect(within(report).getByRole("region", { name })).toBeDefined();
+    }
+  });
+
+  it("uses a nested heading hierarchy (h2 report title, h3 subsection titles)", async () => {
+    await live();
+    const report = screen.getByRole("region", { name: "Session evidence" });
+    expect(within(report).getByRole("heading", { level: 2, name: "Session evidence" })).toBeDefined();
+    expect(within(report).getByRole("heading", { level: 3, name: "Session outcome" })).toBeDefined();
+    expect(within(report).getByRole("heading", { level: 3, name: "Speech recognition summary" })).toBeDefined();
+    expect(within(report).getByRole("heading", { level: 3, name: "Conversation engine summary" })).toBeDefined();
+    expect(within(report).getByRole("heading", { level: 3, name: "Speech synthesis summary" })).toBeDefined();
+    expect(within(report).getByRole("heading", { level: 3, name: "Latency summary" })).toBeDefined();
+  });
+});

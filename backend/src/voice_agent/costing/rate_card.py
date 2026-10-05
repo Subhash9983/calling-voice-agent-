@@ -6,8 +6,11 @@ hold price constants.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from datetime import date
 from decimal import Decimal
+from types import MappingProxyType
+from typing import Final
 
 from voice_agent.contracts.cost import (
     Currency,
@@ -148,3 +151,27 @@ def phase0_promotional_rate_card() -> RateCard:
         fx_rates=(PLANNING_FX, PLANNING_FX_INR_TO_USD),
         evidence_only=_EVIDENCE_ONLY,
     )
+
+
+# Every approved, dated version. A rate change adds a new ID here; an existing
+# entry is never edited, so historical evidence keeps its own rates (docs/15 §13).
+_REGISTRY: Final[Mapping[str, Callable[[], RateCard]]] = MappingProxyType(
+    {
+        PHASE0_RATE_CARD_ID: phase0_rate_card,
+        PHASE0_PROMO_RATE_CARD_ID: phase0_promotional_rate_card,
+    }
+)
+KNOWN_RATE_CARD_IDS: Final = tuple(_REGISTRY)
+
+
+def rate_card_by_id(rate_card_id: str) -> RateCard | None:
+    """The exact approved card for a stored ``rate_card_version``; ``None`` if unknown."""
+    factory = _REGISTRY.get(rate_card_id)
+    return None if factory is None else factory()
+
+
+class ApprovedRateCards:
+    """``RateLookup`` port over the approved registry (exact version only)."""
+
+    def rate_card(self, rate_card_id: str) -> RateCard | None:
+        return rate_card_by_id(rate_card_id)

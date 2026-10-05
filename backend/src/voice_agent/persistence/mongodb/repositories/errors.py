@@ -31,23 +31,22 @@ from voice_agent.persistence.mongodb.repositories.base import (
     build,
     encode,
     parse,
+    scheduled,
 )
 from voice_agent.ports.clock import Clock
-from voice_agent.ports.persistence import MAX_QUERY_LIMIT, ReferenceNotFoundError
+from voice_agent.ports.control_plane import ErrorCursor
+from voice_agent.ports.persistence import MAX_QUERY_LIMIT
 from voice_agent.ports.repositories import RevisionConflictError
 
 
 class MongoErrorEventStore(MongoRepository):
     async def record(self, error: ErrorEventRecord) -> bool:
-        async with translate_errors():
-            parent = await self.collection(Collection.VOICE_SESSIONS).count_documents(
-                {"session_id": error.session_id}, limit=1
-            )
-        if not parent:
-            raise ReferenceNotFoundError("the error's session does not exist")
+        anchor = await self.require_session_anchor(error.session_id)
         try:
             async with translate_errors():
-                await self.collection(Collection.ERROR_EVENTS).insert_one(encode(error))
+                await self.collection(Collection.ERROR_EVENTS).insert_one(
+                    scheduled(encode(error), anchor)
+                )
         except IndexedDuplicateKeyError:
             return False
         return True
@@ -64,6 +63,21 @@ class MongoErrorEventStore(MongoRepository):
         if after is not None:
             filters["occurred_at"] = {"$gt": to_bson(after)}
         return await self._list(filters, [("occurred_at", 1)], limit)
+
+    async def list_session_errors(
+        self, session_id: str, *, limit: int, after: ErrorCursor | None = None
+    ) -> Sequence[ErrorEventRecord]:
+        """Control-API page ordered by ``(occurred_at, error_id)`` (``ix_session_errors``)."""
+        filters: dict[str, Any] = {"session_id": session_id}
+        if after is not None:
+            stamp = to_bson(after.occurred_at)
+            filters["$or"] = [
+                {"occurred_at": {"$gt": stamp}},
+                {"occurred_at": stamp, "error_id": {"$gt": after.error_id}},
+            ]
+        # One extra row past the page maximum lets the caller detect a next page.
+        sort = [("occurred_at", 1), ("error_id", 1)]
+        return await self._list(filters, sort, limit, maximum=MAX_QUERY_LIMIT + 1)
 
     async def list_by_fingerprint(
         self, fingerprint: str, *, limit: int
@@ -113,9 +127,14 @@ class MongoErrorEventStore(MongoRepository):
         return parse(ErrorEventRecord, stored)
 
     async def _list(
-        self, filters: dict[str, Any], sort: list[tuple[str, int]], limit: int
+        self,
+        filters: dict[str, Any],
+        sort: list[tuple[str, int]],
+        limit: int,
+        *,
+        maximum: int = MAX_QUERY_LIMIT,
     ) -> list[ErrorEventRecord]:
-        bounded = bounded_limit(limit, MAX_QUERY_LIMIT)
+        bounded = bounded_limit(limit, maximum)
         async with translate_errors():
             rows = await (
                 self.collection(Collection.ERROR_EVENTS)

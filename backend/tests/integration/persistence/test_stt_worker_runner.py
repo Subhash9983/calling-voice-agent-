@@ -217,8 +217,15 @@ async def test_stt_check_persists_transcript_operation_usage_and_cost(backend: B
     assert turns[0]["status"] == "abandoned"  # no conversation engine in the STT check
 
     operations = await _rows(backend, Collection.PROVIDER_OPERATIONS, session_id)
-    assert len(operations) == 1
-    stream = operations[0]
+    by_type = {row["operation_type"]: row for row in operations}
+    assert sorted(by_type) == ["stt_stream", "webrtc_session"]  # WP11: LiveKit usage too
+    transport = by_type["webrtc_session"]
+    assert transport["component"] == "transport"
+    assert transport["provider_identity"]["provider"] == "livekit"
+    [participant_time] = transport["usage"]["items"]
+    assert participant_time["unit"] == "transport_session_seconds"
+    assert participant_time["source"] == "derived"
+    stream = by_type["stt_stream"]
     assert stream["status"] == "succeeded"
     assert stream["operation_type"] == "stt_stream"
     assert stream["provider_identity"]["provider"] == "deepgram"
@@ -236,6 +243,10 @@ async def test_stt_check_persists_transcript_operation_usage_and_cost(backend: B
     assert all(
         row["rate"]["rate_card_version"] == "phase0_rate_card_2026_09_26_v1" for row in costs
     )
+    livekit = [row for row in costs if row["component"] == "transport"]
+    assert livekit  # reported separately even at zero marginal cost (docs/15 §5.3)
+    assert {row["rate"]["pricing_basis"] for row in livekit} == {"included_allowance"}
+    assert {Decimal(str(row["amounts"]["gross_cost"])) for row in livekit} == {Decimal(0)}
 
     events = await _rows(backend, Collection.SESSION_EVENTS, session_id)
     ended = [e for e in events if e["event_type"] == "user.speech_ended"]

@@ -3,6 +3,18 @@ import { ApiError } from "../../src/api";
 import { VoiceSessionController } from "../../src/session/controller";
 import { fakeDeps, type FakeDeps } from "../support/fakeDeps";
 
+/** Default outcome once `ended()` stops a session with reason "user_ended" and no errors are reported. */
+const CLEAN_OUTCOME = { status: "ended", disconnectReason: "user_ended", errorCount: 0, errorCodes: [] };
+
+const LATENCY_NOT_AVAILABLE = [
+  { key: "sttFinalization", label: "STT finalization", metric: null },
+  { key: "llmFirstToken", label: "LLM first token", metric: null },
+  { key: "ttsFirstAudio", label: "TTS first audio", metric: null },
+  { key: "firstAudibleResponse", label: "First audible response", metric: null },
+  { key: "completeTurn", label: "Complete turn", metric: null },
+  { key: "interruption", label: "Interruption", metric: null },
+];
+
 const STT_OP = {
   operationId: "op-1",
   component: "stt",
@@ -68,6 +80,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "final" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "final" },
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
   });
 
@@ -101,6 +115,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: null,
       tts: null,
       ttsCost: null,
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
     expect(state.phase).toBe("ended");
     expect(state.error).toBeNull();
@@ -118,6 +134,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: null,
       tts: null,
       ttsCost: null,
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
     expect(controller.getState().error).toBeNull();
   });
@@ -143,6 +161,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: "0.0120", calculationStatus: "final" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "final" },
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
   });
 
@@ -160,6 +180,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "partial" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "partial" },
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
   });
 
@@ -184,6 +206,8 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "final" },
       tts: { count: 1, charactersSynthesized: 42, firstAudioMs: null },
       ttsCost: { ttsUsd: "0.0013", calculationStatus: "final" },
+      outcome: CLEAN_OUTCOME,
+      latency: LATENCY_NOT_AVAILABLE,
     });
   });
 
@@ -210,6 +234,99 @@ describe("STT evidence after the session ends", () => {
       expect(controller.getState().phase).toBe("ended");
     });
     expect(controller.getState().evidence.status).toBe("ready");
+  });
+
+  it("counts and groups safe error codes by component and type", async () => {
+    const controller = await ended((fake) => {
+      vi.mocked(fake.api.listErrors).mockResolvedValue([
+        {
+          errorId: "e1",
+          component: "stt",
+          errorType: "provider_timeout",
+          category: "transient",
+          severity: "error",
+          retryable: true,
+          recovered: true,
+          userAffected: false,
+          safeMessage: "The speech recognizer timed out and recovered.",
+          occurredAt: "2026-09-29T10:00:02Z",
+        },
+        {
+          errorId: "e2",
+          component: "stt",
+          errorType: "provider_timeout",
+          category: "transient",
+          severity: "error",
+          retryable: true,
+          recovered: true,
+          userAffected: false,
+          safeMessage: "The speech recognizer timed out and recovered.",
+          occurredAt: "2026-09-29T10:00:05Z",
+        },
+      ]);
+    });
+
+    expect(controller.getState().evidence).toMatchObject({
+      outcome: {
+        status: "ended",
+        disconnectReason: "user_ended",
+        errorCount: 2,
+        errorCodes: [{ component: "stt", errorType: "provider_timeout", count: 2 }],
+      },
+    });
+  });
+
+  it("reports errorCount as not available (never zero) when the errors fetch fails", async () => {
+    const controller = await ended((fake) => {
+      vi.mocked(fake.api.listErrors).mockRejectedValue(new Error("boom"));
+    });
+
+    expect(controller.getState().evidence).toMatchObject({
+      outcome: { status: "ended", disconnectReason: "user_ended", errorCount: null, errorCodes: [] },
+    });
+  });
+
+  it("reports a failed outcome when the end request could not be confirmed", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.endSession).mockRejectedValue(new ApiError({ code: "NETWORK_ERROR", message: "x", status: 0, retryable: true }));
+    const controller = new VoiceSessionController(fake.deps);
+    await controller.start("cfg-1");
+    await controller.stop("user_ended");
+
+    expect(controller.getState().evidence).toMatchObject({
+      outcome: { status: "failed", disconnectReason: null },
+    });
+  });
+
+  it("includes the latency summary once the session reports it", async () => {
+    const controller = await ended((fake) => {
+      vi.mocked(fake.api.getSession).mockResolvedValue({
+        sessionId: "sess-1",
+        status: "ended",
+        agentActivityState: null,
+        disconnectReason: "user_ended",
+        latencySummary: {
+          sttFinalization: null,
+          llmFirstToken: null,
+          ttsFirstAudio: null,
+          firstAudibleResponse: null,
+          completeTurn: { sampleCount: 1, averageMs: 900, p50Ms: 900, p95Ms: 900, maximumMs: 900 },
+          interruption: null,
+        },
+      });
+    });
+
+    const evidence = controller.getState().evidence;
+    if (evidence.status !== "ready") {
+      throw new Error("expected ready evidence");
+    }
+    expect(evidence.latency.find((stage) => stage.key === "completeTurn")?.metric).toEqual({
+      sampleCount: 1,
+      averageMs: 900,
+      p50Ms: 900,
+      p95Ms: 900,
+      maximumMs: 900,
+    });
   });
 
   it("clears previous evidence when a new session starts", async () => {
