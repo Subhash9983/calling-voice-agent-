@@ -78,6 +78,8 @@ def _component(event_type: EventType) -> str:
         return "stt"
     if prefix == "conversation":
         return "conversation_engine"
+    if prefix in {"tts", "playback"}:
+        return prefix
     return "worker"
 
 

@@ -325,7 +325,7 @@ Incremental dependency licence/subscription cost: INR 0
 
 This does not make the overall system free. Provider API usage, LiveKit Cloud, Atlas Flex, network, storage, FX/tax, paid support, CI compute, and future hosting remain separate costs. Playwright browser downloads consume local disk/network but do not add an approved per-test software fee.
 
-Licences and dependency metadata are recorded/checked during lock creation. Open licence risk (Decision 068): `sarvamai==0.1.34` declares no licence; terms must be confirmed with Sarvam before WP9. A package with an incompatible licence requires removal or separate approval.
+Licences and dependency metadata are recorded/checked during lock creation. Licence risk resolved (user decision 2026-10-05): `sarvamai==0.1.34` declares no licence in its package metadata; the user has reviewed Sarvam's terms and approved use of the SDK for this project. WP9 may proceed. Re-check on any version bump, since a future release could change licensing terms.
 
 ## 18. Deferred decisions
 

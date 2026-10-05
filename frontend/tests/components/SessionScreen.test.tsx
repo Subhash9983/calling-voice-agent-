@@ -49,6 +49,14 @@ describe("SessionScreen accessibility and states", () => {
     expect(screen.getByLabelText<HTMLSelectElement>("Agent configuration").value).toBe("cfg-1");
   });
 
+  it("always shows an AI-voice disclosure note, before and during a session", async () => {
+    const fake = renderScreen();
+    expect(screen.getByRole("note").textContent).toMatch(/AI-generated/i);
+
+    await startSession(fake);
+    expect(screen.getByRole("note").textContent).toMatch(/AI-generated/i);
+  });
+
   it("disables end and mute until a session is live, and announces status politely", async () => {
     renderScreen();
     await screen.findByRole("option", { name: /default agent/i });
@@ -112,6 +120,18 @@ describe("SessionScreen accessibility and states", () => {
     expect(log.querySelector("b")).toBeNull();
   });
 
+  it("shows the interrupted agent-activity state sent directly on va.state.v1 (after a barge-in cancellation)", async () => {
+    const fake = renderScreen();
+    await startSession(fake);
+    const envelope = { eventId: "e1", sessionId: "s", turnId: null, eventType: "x", sequenceNumber: null, occurredAt: "t", payload: {} } as const;
+
+    act(() => {
+      fake.handlers().onMessage({ topic: "va.state.v1", envelope, state: "interrupted" });
+    });
+
+    expect(screen.getAllByText("Agent interrupted").length).toBeGreaterThan(0);
+  });
+
   it("shows a reconnecting notice and never a stale speaking state", async () => {
     const fake = renderScreen();
     await startSession(fake);
@@ -142,7 +162,7 @@ describe("SessionScreen accessibility and states", () => {
     });
   });
 
-  it("verifies the backend test tone once audible audio is received", async () => {
+  it("verifies agent audio (tone or real speech) once audible audio is received", async () => {
     const fake = renderScreen();
     await startSession(fake);
     expect(screen.getByText("Not yet verified")).toBeDefined();
@@ -151,7 +171,7 @@ describe("SessionScreen accessibility and states", () => {
       fake.handlers().onAgentAudio({ phase: "playing", receiving: true, audible: true });
     });
 
-    expect(screen.getByText("Tone verified")).toBeDefined();
+    expect(screen.getByText("Audio verified")).toBeDefined();
     expect(screen.getByText(/played through the WebRTC audio element/)).toBeDefined();
   });
 

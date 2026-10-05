@@ -15,6 +15,16 @@ export const CONVERSATION_COMPONENT = "conversation_engine";
 export const INPUT_TOKENS = "input_tokens";
 export const OUTPUT_TOKENS = "output_tokens";
 
+/** TTS component and usage units (docs/09 §9-§10). */
+export const TTS_COMPONENT = "tts";
+export const SYNTHESIZED_CHARACTERS = "synthesized_characters";
+/**
+ * Optional first-audio latency usage unit. Not part of the current backend
+ * fixtures; tolerated as an additive unit so the summary stays accurate if a
+ * future operation row reports it (docs/09 §12 first-audio timing).
+ */
+export const FIRST_AUDIO_MS = "first_audio_ms";
+
 export interface OperationUsageItem {
   readonly unit: string;
   readonly quantity: number;

@@ -17,6 +17,7 @@ from voice_agent.provider_registry.llm_check_config import llm_check_agent_confi
 from voice_agent.provider_registry.media_check_config import media_check_agent_config_document
 from voice_agent.provider_registry.mock_config import mock_agent_config_document
 from voice_agent.provider_registry.stt_check_config import stt_check_agent_config_document
+from voice_agent.provider_registry.tts_check_config import tts_check_agent_config_document
 from voice_agent.security.settings import AppEnvironment
 
 
@@ -26,6 +27,7 @@ def builtin_agent_config_documents() -> tuple[dict[str, Any], ...]:
         media_check_agent_config_document(),
         stt_check_agent_config_document(),
         llm_check_agent_config_document(),
+        tts_check_agent_config_document(),
     )
 
 

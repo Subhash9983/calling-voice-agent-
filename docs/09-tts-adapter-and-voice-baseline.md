@@ -4,7 +4,7 @@ Status: Approved for Phase 0 R&D
 Authority: Decision 033 with Decisions 047, 062, 065, and 067 amendments  
 Scope: Streaming Hindi, Hinglish, and Indian-English browser speech  
 Depends on: `00-voice-agent-master-plan.md`, `01-system-contracts.md`, `03-backend-module-design.md`, `05-agent-worker-orchestration.md`, `06-livekit-transport-adapter.md`, `08-conversation-adapter-and-llm-baseline.md`  
-Implementation status: Not started  
+Implementation status: Implemented (WP9, 2026-10-05)  
 Last reviewed: 2026-09-26
 
 Baseline: Sarvam Bulbul v3 (`bulbul:v3`), voice `priya`  

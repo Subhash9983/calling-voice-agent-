@@ -2,7 +2,8 @@
 
 ``atlas``-marked tests (the R&D MongoDB Atlas database), ``livekit``-marked
 tests (LiveKit Cloud, metered), ``deepgram``-marked tests (Deepgram live
-STT, metered), and ``openai``-marked tests (OpenAI GPT-6 Luna, metered) are
+STT, metered), ``openai``-marked tests (OpenAI GPT-6 Luna, metered), and
+``sarvam``-marked tests (Sarvam Bulbul v3 live TTS, metered in INR) are
 skipped unless their marker is selected explicitly with ``-m`` *and*
 ``VOICE_AGENT_SECRETS_FILE`` is present in the process environment, so a
 default ``pytest`` run is always offline.
@@ -11,14 +12,21 @@ default ``pytest`` run is always offline.
 the WP8 live budget is still PENDING in docs/15 §2.4, and an ambient
 ``OPENAI_API_KEY`` user variable must never be enough to spend money.
 
+``sarvam`` tests additionally require ``VOICE_AGENT_SARVAM_LIVE_APPROVED=1``
+(the WP9 INR 50.00 live budget recorded in docs/15 §2.5, approved
+2026-10-05); the secrets file alone is never enough to spend money.
+
 Every test that is not ``openai``-marked runs behind a guard that fails any
-HTTP request to an ``openai.com`` host, so offline runs provably make no
-OpenAI call.
+HTTP request to an ``openai.com`` host, and every test that is not
+``sarvam``-marked fails any HTTP request *or DNS resolution* (the SDK's
+WebSocket does not use ``httpx``) for a ``sarvam.ai`` host, so offline runs
+provably make no OpenAI or Sarvam call.
 """
 
 from __future__ import annotations
 
 import os
+import socket
 from collections.abc import Iterator
 from typing import Any
 
@@ -27,8 +35,11 @@ import pytest
 
 SECRETS_FILE_VARIABLE = "VOICE_AGENT_SECRETS_FILE"
 OPENAI_APPROVAL_VARIABLE = "VOICE_AGENT_OPENAI_LIVE_APPROVED"
-REAL_SERVICE_MARKERS = ("atlas", "livekit", "deepgram", "openai")
+SARVAM_APPROVAL_VARIABLE = "VOICE_AGENT_SARVAM_LIVE_APPROVED"
+APPROVAL_VARIABLES = {"openai": OPENAI_APPROVAL_VARIABLE, "sarvam": SARVAM_APPROVAL_VARIABLE}
+REAL_SERVICE_MARKERS = ("atlas", "livekit", "deepgram", "openai", "sarvam")
 BLOCKED_HOST_SUFFIX = "openai.com"
+SARVAM_HOST_SUFFIX = "sarvam.ai"
 # pymongo 4.18.1's background server monitor can leave a connecting socket for
 # the GC when a client closes mid-connect on Windows (traced to
 # ``pymongo/asynchronous/monitor.py`` -> ``pool.py``). That is driver-internal,
@@ -61,9 +72,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 )
             elif not configured:
                 item.add_marker(pytest.mark.skip(reason=f"{SECRETS_FILE_VARIABLE} is not set"))
-            elif marker == "openai" and os.environ.get(OPENAI_APPROVAL_VARIABLE) != "1":
+            elif marker in APPROVAL_VARIABLES and os.environ.get(APPROVAL_VARIABLES[marker]) != "1":
                 item.add_marker(
-                    pytest.mark.skip(reason=f"{OPENAI_APPROVAL_VARIABLE}=1 is required")
+                    pytest.mark.skip(reason=f"{APPROVAL_VARIABLES[marker]}=1 is required")
                 )
 
 
@@ -71,9 +82,42 @@ class OpenAiEgressBlockedError(RuntimeError):
     """An offline test attempted an HTTP request to an OpenAI host."""
 
 
+def _matches(host: str, suffix: str) -> bool:
+    return host == suffix or host.endswith(f".{suffix}")
+
+
 def _is_openai_host(request: httpx.Request) -> bool:
-    host = request.url.host or ""
-    return host == BLOCKED_HOST_SUFFIX or host.endswith(f".{BLOCKED_HOST_SUFFIX}")
+    return _matches(request.url.host or "", BLOCKED_HOST_SUFFIX)
+
+
+class SarvamEgressBlockedError(OSError):
+    """An offline test attempted to reach a Sarvam host (HTTP or WebSocket)."""
+
+
+@pytest.fixture(autouse=True)
+def sarvam_egress_attempts(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[list[str]]:
+    """Fail (and record) any resolution of / request to a Sarvam host outside ``sarvam`` tests.
+
+    Name resolution is the choke point shared by ``httpx`` (REST) and the
+    ``websockets`` client the Sarvam SDK uses for streaming TTS.
+    """
+    attempts: list[str] = []
+    if request.node.get_closest_marker("sarvam") is not None:
+        yield attempts
+        return
+    resolve = socket.getaddrinfo
+
+    def guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+        name = host.decode() if isinstance(host, bytes) else str(host or "")
+        if _matches(name.rstrip(".").lower(), SARVAM_HOST_SUFFIX):
+            attempts.append(name)
+            raise SarvamEgressBlockedError(name)
+        return resolve(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+    yield attempts
 
 
 @pytest.fixture(autouse=True)

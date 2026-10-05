@@ -117,6 +117,7 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
         adapter_versions={
             OperationComponent.STT: config.stt.adapter_version,
             OperationComponent.CONVERSATION_ENGINE: config.conversation_engine.adapter_version,
+            OperationComponent.TTS: config.tts.adapter_version,
         },
     )
     card = rate_card_for(config)

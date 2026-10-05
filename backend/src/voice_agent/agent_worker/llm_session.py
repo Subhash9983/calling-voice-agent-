@@ -82,7 +82,7 @@ def conversation_setup(context: ActivityContext, admission: JobAdmission) -> Con
     )
 
 
-def _engine(admission: JobAdmission, deps: LlmSessionDeps) -> OpenAiConversationAdapter:
+def conversation_engine(admission: JobAdmission, deps: LlmSessionDeps) -> OpenAiConversationAdapter:
     config = admission.config
     credential_ref = config.conversation_engine.credential_ref
     if credential_ref is None:  # pragma: no cover - rejected by the approved profile
@@ -105,7 +105,7 @@ def build_llm_check(
     context: ActivityContext, admission: JobAdmission, deps: LlmSessionDeps
 ) -> SttCheck:
     setup = conversation_setup(context, admission)
-    engine = _engine(admission, deps)
+    engine = conversation_engine(admission, deps)
 
     def gate(evidence: SttEvidence, publisher: RealtimePublisher) -> ConversationGate:
         return ConversationGate(

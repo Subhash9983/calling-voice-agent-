@@ -670,6 +670,214 @@
     "topic": "va.response.v1"
   },
   {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f00",
+      "event_type": "playback.started",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 2,
+        "segment_id": "00000000-0000-4000-8000-0000000000f2",
+        "state": "started",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "cancellation_generation": 2,
+      "event_type": "playback.started",
+      "segment_id": "00000000-0000-4000-8000-0000000000f2",
+      "state": "started",
+      "worker_generation": 1
+    },
+    "name": "tts_playback_started_first_segment",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f01",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "speaking"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "speaking"
+    },
+    "name": "tts_state_speaking",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f02",
+      "event_type": "conversation.segment_ready",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": false,
+        "segment_sequence": 0,
+        "text": "Namaste Arun!"
+      },
+      "schema_version": 1,
+      "sequence_number": 1,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "event_type": "conversation.segment_ready",
+      "is_final": false,
+      "segment_sequence": 0,
+      "text": "Namaste Arun!"
+    },
+    "name": "tts_response_heard_first_segment",
+    "reliable": true,
+    "topic": "va.response.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f03",
+      "event_type": "playback.completed",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 2,
+        "segment_id": "00000000-0000-4000-8000-0000000000f2",
+        "state": "completed",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "cancellation_generation": 2,
+      "event_type": "playback.completed",
+      "segment_id": "00000000-0000-4000-8000-0000000000f2",
+      "state": "completed",
+      "worker_generation": 1
+    },
+    "name": "tts_playback_completed_first_segment",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f04",
+      "event_type": "playback.started",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 2,
+        "segment_id": "00000000-0000-4000-8000-0000000000f3",
+        "state": "started",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "cancellation_generation": 2,
+      "event_type": "playback.started",
+      "segment_id": "00000000-0000-4000-8000-0000000000f3",
+      "state": "started",
+      "worker_generation": 1
+    },
+    "name": "tts_playback_started_second_segment",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f05",
+      "event_type": "conversation.segment_ready",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "is_final": false,
+        "segment_sequence": 1,
+        "text": "Namaste Arun! Aaj main aapko ek lambi baat batati hoon."
+      },
+      "schema_version": 1,
+      "sequence_number": 2,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "event_type": "conversation.segment_ready",
+      "is_final": false,
+      "segment_sequence": 1,
+      "text": "Namaste Arun! Aaj main aapko ek lambi baat batati hoon."
+    },
+    "name": "tts_response_heard_second_segment",
+    "reliable": true,
+    "topic": "va.response.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f06",
+      "event_type": "playback.cancelled",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "cancellation_generation": 2,
+        "segment_id": "00000000-0000-4000-8000-0000000000f3",
+        "state": "cancelled",
+        "worker_generation": 1
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-0000000000f1"
+    },
+    "expected": {
+      "cancellation_generation": 2,
+      "event_type": "playback.cancelled",
+      "segment_id": "00000000-0000-4000-8000-0000000000f3",
+      "state": "cancelled",
+      "worker_generation": 1
+    },
+    "name": "tts_playback_cancelled_second_segment",
+    "reliable": true,
+    "topic": "va.playback.v1"
+  },
+  {
+    "envelope": {
+      "event_id": "00000000-0000-4000-8000-000000000f07",
+      "event_type": "session.active",
+      "occurred_at": "2026-09-28T00:00:00Z",
+      "operation_id": null,
+      "payload": {
+        "state": "interrupted"
+      },
+      "schema_version": 1,
+      "sequence_number": null,
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": null
+    },
+    "expected": {
+      "event_type": "session.active",
+      "state": "interrupted"
+    },
+    "name": "tts_state_interrupted",
+    "reliable": true,
+    "topic": "va.state.v1"
+  },
+  {
     "direction": "server_to_agent",
     "envelope": {
       "correlation_id": "corr-golden",

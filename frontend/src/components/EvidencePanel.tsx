@@ -11,6 +11,14 @@ function formatTokens(tokens: number | null): string {
   return tokens === null ? NOT_AVAILABLE : tokens.toLocaleString();
 }
 
+function formatCharacters(characters: number | null): string {
+  return characters === null ? NOT_AVAILABLE : characters.toLocaleString();
+}
+
+function formatMs(ms: number | null): string {
+  return ms === null ? NOT_AVAILABLE : `${ms.toFixed(0)} ms`;
+}
+
 /** Per-session STT summary (docs/04 §12, §14). Missing data is neutral, never an error. */
 export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }): ReactElement {
   const cost = evidence.status === "ready" ? evidence.cost : null;
@@ -18,6 +26,9 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
   const conversation = evidence.status === "ready" ? (evidence.conversation ?? null) : null;
   const conversationCost = evidence.status === "ready" ? (evidence.conversationCost ?? null) : null;
   const conversationUsd = conversationCost?.conversationUsd ?? null;
+  const tts = evidence.status === "ready" ? (evidence.tts ?? null) : null;
+  const ttsCost = evidence.status === "ready" ? (evidence.ttsCost ?? null) : null;
+  const ttsUsd = ttsCost?.ttsUsd ?? null;
   return (
     <>
       <section aria-labelledby="evidence-heading" className="panel">
@@ -54,6 +65,25 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
               {conversationUsd === null || conversationCost === null
                 ? NOT_AVAILABLE
                 : `$${conversationUsd} (${conversationCost.calculationStatus})`}
+            </dd>
+          </dl>
+        )}
+      </section>
+      <section aria-labelledby="tts-evidence-heading" className="panel">
+        <h2 id="tts-evidence-heading">Speech synthesis summary</h2>
+        {evidence.status === "idle" ? (
+          <p className="muted">Shown after the session ends.</p>
+        ) : (
+          <dl className="facts">
+            <dt>Synthesis operations</dt>
+            <dd>{tts === null ? NOT_AVAILABLE : tts.count}</dd>
+            <dt>Characters synthesized</dt>
+            <dd>{formatCharacters(tts?.charactersSynthesized ?? null)}</dd>
+            <dt>First-audio timing</dt>
+            <dd>{formatMs(tts?.firstAudioMs ?? null)}</dd>
+            <dt>Estimated cost</dt>
+            <dd>
+              {ttsUsd === null || ttsCost === null ? NOT_AVAILABLE : `$${ttsUsd} (${ttsCost.calculationStatus})`}
             </dd>
           </dl>
         )}

@@ -324,3 +324,55 @@ describe("conversation engine summary", () => {
     expect(within(panel).queryByRole("alert")).toBeNull();
   });
 });
+
+describe("speech synthesis summary", () => {
+  it("is neutral before the session ends", async () => {
+    await live();
+    const panel = screen.getByRole("region", { name: "Speech synthesis summary" });
+    expect(panel.textContent).toContain("Shown after the session ends");
+  });
+
+  it("shows operation count, characters synthesized and cost after the session ends", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.listOperations).mockImplementation((_sessionId, options) => {
+      if (options?.component === "tts") {
+        return Promise.resolve([
+          {
+            operationId: "o3",
+            component: "tts",
+            provider: "sarvam",
+            status: "succeeded",
+            usage: [{ unit: "synthesized_characters", quantity: 87 }],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    vi.mocked(fake.api.getCosts).mockResolvedValue({
+      calculationStatus: "final",
+      totalUsd: "0.03",
+      components: [{ component: "tts", label: "Sarvam", amountUsd: "0.0026" }],
+    });
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Speech synthesis summary" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("$0.0026 (final)");
+    });
+    expect(within(panel).getByText("Synthesis operations").nextElementSibling?.textContent).toBe("1");
+    expect(within(panel).getByText("Characters synthesized").nextElementSibling?.textContent).toBe("87");
+    expect(within(panel).getByText("First-audio timing").nextElementSibling?.textContent).toBe("Not available yet");
+  });
+
+  it("shows a neutral not-available state when no TTS operations have been recorded yet", async () => {
+    await live();
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Speech synthesis summary" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("Not available yet");
+    });
+    expect(within(panel).queryByRole("alert")).toBeNull();
+  });
+});

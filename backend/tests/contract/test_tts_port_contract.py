@@ -1,4 +1,4 @@
-"""TTS port contract (docs/09 §3, §11, §25). WP9's Sarvam adapter joins this suite."""
+"""TTS port contract (docs/09 §3, §11, §25): the mock and Sarvam adapters pass it alike."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import asyncio
 from decimal import Decimal
 
 import pytest
+from tests.support.fake_sarvam import PAUSE, FakeSarvamConnector, Script, audio
+from tests.support.fake_sarvam import reply as speak
 
 from voice_agent.contracts.identity import GenerationStamp
 from voice_agent.contracts.tts import (
@@ -17,8 +19,10 @@ from voice_agent.contracts.tts import (
     TtsVoiceConfig,
 )
 from voice_agent.contracts.usage import UsageUnit
+from voice_agent.events_and_latency.clock import SystemClock
 from voice_agent.ports.tts import TTSPort
 from voice_agent.tts_adapters.mock.adapter import MockTtsAdapter
+from voice_agent.tts_adapters.sarvam.adapter import SarvamTtsAdapter
 
 SESSION = "00000000-0000-4000-8000-000000000001"
 TURN = "00000000-0000-4000-8000-000000000002"
@@ -138,3 +142,75 @@ async def test_close_is_idempotent_and_blocks_synthesis() -> None:
         await _collect(adapter, _request())
     with pytest.raises(ValueError, match="frame"):
         MockTtsAdapter(frames_per_segment=0)
+
+
+# --- WP9: the Sarvam Bulbul v3 adapter passes the same lifecycle contract ---
+SARVAM_VOICE = TtsVoiceConfig(provider="sarvam", model="bulbul:v3", voice_id="priya")
+
+
+def _sarvam(scripts: list[Script]) -> tuple[SarvamTtsAdapter, FakeSarvamConnector]:
+    connector = FakeSarvamConnector.with_scripts(scripts)
+    adapter = SarvamTtsAdapter(connector, clock=SystemClock(), prewarm=False, keepalive_s=3600)
+    return adapter, connector
+
+
+def test_sarvam_adapter_satisfies_the_port() -> None:
+    assert isinstance(_sarvam([])[0], TTSPort)
+
+
+@pytest.mark.asyncio
+async def test_sarvam_synthesis_requires_an_open_session() -> None:
+    adapter, _ = _sarvam([])
+
+    with pytest.raises(RuntimeError, match="not open"):
+        _ = [event async for event in adapter.synthesize(_request())]
+
+
+@pytest.mark.asyncio
+async def test_sarvam_frames_are_24khz_mono_20ms_and_usage_counts_characters() -> None:
+    adapter, _ = _sarvam([speak(1.4, 1.6)])
+    await adapter.open_session(SARVAM_VOICE)
+    request = _request()
+
+    events = [event async for event in adapter.synthesize(request)]
+
+    chunks = [e for e in events if isinstance(e, TtsAudioChunk)]
+    assert len(chunks) == 3
+    assert all(c.frame.sample_rate_hz == 24_000 and c.frame.duration_ms == 20 for c in chunks)
+    assert all(c.frame.channels == 1 for c in chunks)
+    timestamps = [c.frame.captured_at_ms for c in chunks]
+    assert timestamps == sorted(timestamps)
+    completed = events[-1]
+    assert isinstance(completed, TtsSegmentCompleted)
+    assert completed.usage.quantity_of(UsageUnit.SYNTHESIZED_CHARACTERS) == len(request.text)
+    assert all(e.stamp == request.stamp for e in events)
+
+
+@pytest.mark.asyncio
+async def test_sarvam_cancel_segment_and_turn_stop_unplayed_audio() -> None:
+    adapter, connector = _sarvam([[audio(1), PAUSE], [audio(1), PAUSE]])
+    await adapter.open_session(SARVAM_VOICE)
+    for cancel in (adapter.cancel_segment, adapter.cancel_turn):
+        stream = adapter.synthesize(_request())
+        first = await anext(stream)
+        pending = asyncio.ensure_future(anext(stream))
+        await asyncio.sleep(0)
+        await cancel(SEGMENT if cancel == adapter.cancel_segment else TURN)
+
+        assert isinstance(first, TtsAudioChunk)
+        assert isinstance(await pending, TtsCancelled)
+        await stream.aclose()
+    assert all(stream.closed for stream in connector.streams)
+
+
+@pytest.mark.asyncio
+async def test_sarvam_close_is_idempotent_and_blocks_synthesis() -> None:
+    adapter, connector = _sarvam([])
+    await adapter.open_session(SARVAM_VOICE)
+
+    await adapter.close()
+    await adapter.close()
+
+    assert connector.closed
+    with pytest.raises(RuntimeError):
+        _ = [event async for event in adapter.synthesize(_request())]

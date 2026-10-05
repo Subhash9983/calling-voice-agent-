@@ -10,7 +10,7 @@
 import { ApiError, type ControlApiClient } from "../api";
 import { watchDeviceLoss, type MicrophoneResult } from "../audio/microphone";
 import { playbackPayload, type ClientEventInput, type ClientEventType } from "../contracts/realtime";
-import { CONVERSATION_COMPONENT, STT_COMPONENT } from "../contracts/diagnosticsApi";
+import { CONVERSATION_COMPONENT, STT_COMPONENT, TTS_COMPONENT } from "../contracts/diagnosticsApi";
 import type { DisconnectReason, TransportJoin } from "../contracts/sessionApi";
 import type {
   ClientEventOutcome,
@@ -24,6 +24,8 @@ import {
   summarizeConversationOperations,
   summarizeCost,
   summarizeOperations,
+  summarizeTtsCost,
+  summarizeTtsOperations,
 } from "./evidence";
 import { PlaybackAckTracker } from "./playbackAcks";
 import {
@@ -458,9 +460,10 @@ export class VoiceSessionController {
 
   /** Best-effort: any failure (including a 503 not-ready) is a neutral "not available". */
   private async loadEvidence(sessionId: string): Promise<void> {
-    const [operations, conversationOperations, costs] = await Promise.allSettled([
+    const [operations, conversationOperations, ttsOperations, costs] = await Promise.allSettled([
       this.deps.api.listOperations(sessionId, { component: STT_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.listOperations(sessionId, { component: CONVERSATION_COMPONENT, limit: EVIDENCE_LIMIT }),
+      this.deps.api.listOperations(sessionId, { component: TTS_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.getCosts(sessionId),
     ]);
     const costsValue = costs.status === "fulfilled" ? costs.value : null;
@@ -475,6 +478,8 @@ export class VoiceSessionController {
             ? summarizeConversationOperations(conversationOperations.value)
             : null,
         conversationCost: costsValue === null ? null : summarizeConversationCost(costsValue),
+        tts: ttsOperations.status === "fulfilled" ? summarizeTtsOperations(ttsOperations.value) : null,
+        ttsCost: costsValue === null ? null : summarizeTtsCost(costsValue),
       },
     });
   }

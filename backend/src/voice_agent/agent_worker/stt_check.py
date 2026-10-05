@@ -22,7 +22,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 from pydantic import JsonValue
 
@@ -45,7 +45,7 @@ from voice_agent.contracts.stt import (
     SttTurnFinalized,
     SttWarning,
 )
-from voice_agent.contracts.transport import ClientReady
+from voice_agent.contracts.transport import ClientReady, PlaybackAck
 from voice_agent.domain.turn import ConversationTurn
 from voice_agent.orchestration.generations import GenerationFence
 from voice_agent.ports.clock import Clock, IdGenerator
@@ -84,6 +84,23 @@ class GenerationGate(Protocol):
 
     async def close(self) -> None:
         """Stop any active generation and settle owned turns (idempotent)."""
+        ...
+
+
+@runtime_checkable
+class SpeakingGate(Protocol):
+    """Optional gate capabilities used when the gate produces agent audio (WP9)."""
+
+    async def start(self) -> None:
+        """Prepare output (e.g. open/prewarm TTS) before the first turn."""
+        ...
+
+    async def interrupt(self) -> None:
+        """Cancel the active response after an accepted barge-in."""
+        ...
+
+    async def on_playback_ack(self, ack: PlaybackAck) -> None:
+        """Browser playback acknowledgement (evidence only)."""
         ...
 
 
@@ -164,6 +181,7 @@ class SttCheck:
         """Run until cancelled by the session runner; always closes STT and settles evidence."""
         try:
             await self._start_stt()
+            await self._start_gate()
             await self._publisher.publish_state(AgentActivityState.LISTENING, force=True)
             async with asyncio.TaskGroup() as group:
                 group.create_task(self._consume_stt(self._stt.events()))
@@ -193,6 +211,16 @@ class SttCheck:
             return
         self._stt_available = True
 
+    async def _start_gate(self) -> None:
+        if not isinstance(self.gate, SpeakingGate):
+            return
+        try:
+            await self.gate.start()
+        except Exception as error:  # a cold output start is retried lazily per turn
+            _LOGGER.warning(
+                "gate.start_failed", extra={"safe_fields": {"error": type(error).__name__}}
+            )
+
     async def _stt_writer(self) -> None:
         stamp = self._fence.stamp()
         async for frame in self._transport.audio_frames():
@@ -202,6 +230,8 @@ class SttCheck:
         async for event in self._transport.client_events():
             if isinstance(event, ClientReady) and self._publisher.state is not None:
                 await self._publisher.publish_state(self._publisher.state, force=True)
+            elif isinstance(event, PlaybackAck) and isinstance(self.gate, SpeakingGate):
+                await self.gate.on_playback_ack(event)
 
     # ----------------------------------------------------------- speech --
     async def _vad_loop(self) -> None:
@@ -250,8 +280,10 @@ class SttCheck:
             elif isinstance(decision, SuppressFalseInterruption):
                 self._count("false_interruptions_suppressed")
             elif isinstance(decision, AcceptInterruption):
-                # No agent output exists in the STT check; the new turn opens next.
+                # The new turn opens next; a speaking gate stops its response first.
                 self._count("interruptions_accepted")
+                if isinstance(self.gate, SpeakingGate):
+                    await self.gate.interrupt()
 
     async def _open_turn(self, speech_started_at_ms: int) -> None:
         self._sequence += 1

@@ -22,6 +22,14 @@ const CONVERSATION_OP = {
   ],
 };
 
+const TTS_OP = {
+  operationId: "op-3",
+  component: "tts",
+  provider: "sarvam",
+  status: "succeeded",
+  usage: [{ unit: "synthesized_characters", quantity: 42 }],
+};
+
 function mockListOperations(
   fake: FakeDeps,
   byComponent: Readonly<Record<string, readonly unknown[]>>,
@@ -58,10 +66,12 @@ describe("STT evidence after the session ends", () => {
       cost: { sttUsd: "0.0031", calculationStatus: "final" },
       conversation: null,
       conversationCost: { conversationUsd: null, calculationStatus: "final" },
+      tts: null,
+      ttsCost: { ttsUsd: null, calculationStatus: "final" },
     });
   });
 
-  it("asks for both STT and conversation-engine operations", async () => {
+  it("asks for STT, conversation-engine and TTS operations", async () => {
     const fake = fakeDeps();
     const controller = new VoiceSessionController(fake.deps);
     await controller.start("cfg-1");
@@ -71,6 +81,7 @@ describe("STT evidence after the session ends", () => {
       component: "conversation_engine",
       limit: 100,
     });
+    expect(fake.api.listOperations).toHaveBeenCalledWith("sess-1", { component: "tts", limit: 100 });
   });
 
   it("treats a 503 not-ready costs response as neutral, not an error", async () => {
@@ -88,6 +99,8 @@ describe("STT evidence after the session ends", () => {
       cost: null,
       conversation: null,
       conversationCost: null,
+      tts: null,
+      ttsCost: null,
     });
     expect(state.phase).toBe("ended");
     expect(state.error).toBeNull();
@@ -103,6 +116,8 @@ describe("STT evidence after the session ends", () => {
       cost: null,
       conversation: null,
       conversationCost: null,
+      tts: null,
+      ttsCost: null,
     });
     expect(controller.getState().error).toBeNull();
   });
@@ -126,6 +141,8 @@ describe("STT evidence after the session ends", () => {
       cost: { sttUsd: "0.0031", calculationStatus: "final" },
       conversation: { count: 1, inputTokens: 120, outputTokens: 45 },
       conversationCost: { conversationUsd: "0.0120", calculationStatus: "final" },
+      tts: null,
+      ttsCost: { ttsUsd: null, calculationStatus: "final" },
     });
   });
 
@@ -141,6 +158,44 @@ describe("STT evidence after the session ends", () => {
       cost: { sttUsd: null, calculationStatus: "partial" },
       conversation: null,
       conversationCost: { conversationUsd: null, calculationStatus: "partial" },
+      tts: null,
+      ttsCost: { ttsUsd: null, calculationStatus: "partial" },
+    });
+  });
+
+  it("summarises TTS (synthesis) operations and cost", async () => {
+    const controller = await ended((fake) => {
+      mockListOperations(fake, { stt: [STT_OP], tts: [TTS_OP] });
+      vi.mocked(fake.api.getCosts).mockResolvedValue({
+        calculationStatus: "final",
+        totalUsd: "0.03",
+        components: [
+          { component: "stt", label: "Deepgram", amountUsd: "0.0031" },
+          { component: "tts", label: "Sarvam", amountUsd: "0.0013" },
+        ],
+      });
+    });
+
+    expect(controller.getState().evidence).toEqual({
+      status: "ready",
+      operations: { count: 1, audioSeconds: 7.25 },
+      cost: { sttUsd: "0.0031", calculationStatus: "final" },
+      conversation: null,
+      conversationCost: { conversationUsd: null, calculationStatus: "final" },
+      tts: { count: 1, charactersSynthesized: 42, firstAudioMs: null },
+      ttsCost: { ttsUsd: "0.0013", calculationStatus: "final" },
+    });
+  });
+
+  it("is neutral for TTS evidence when operations fail", async () => {
+    const controller = await ended((fake) => {
+      vi.mocked(fake.api.listOperations).mockRejectedValue(new Error("boom"));
+      vi.mocked(fake.api.getCosts).mockResolvedValue({ calculationStatus: "partial", totalUsd: "0", components: [] });
+    });
+
+    expect(controller.getState().evidence).toMatchObject({
+      tts: null,
+      ttsCost: { ttsUsd: null, calculationStatus: "partial" },
     });
   });
 

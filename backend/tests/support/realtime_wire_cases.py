@@ -58,6 +58,11 @@ STT_NEXT_TURN_ID: Final = "00000000-0000-4000-8000-0000000000d2"
 LLM_TURN_IDS: Final = tuple(
     f"00000000-0000-4000-8000-0000000000{n}" for n in ("e3", "e4", "e5", "e6")
 )
+TTS_TURN_ID: Final = "00000000-0000-4000-8000-0000000000f1"
+TTS_SEGMENT_IDS: Final = (
+    "00000000-0000-4000-8000-0000000000f2",
+    "00000000-0000-4000-8000-0000000000f3",
+)
 TRUNCATED_TEMPLATE_ID: Final = "fallback.response_truncated.v1"
 TRUNCATED_TEXT: Final = (
     "Sorry, response पूरा generate नहीं हो पाया। Please short answer के लिए एक बार फिर पूछिए।"
@@ -322,6 +327,55 @@ async def _llm_check_cases() -> list[dict[str, Any]]:
     return [_case(n, t, b, r) for n, (t, b, r) in zip(names, recorder.sent, strict=True)]
 
 
+async def _tts_check_cases() -> list[dict[str, Any]]:
+    """Real-speech playback from the worker publisher (WP9).
+
+    One turn spoken as two playback segments (pieces), the second interrupted:
+    ``va.state.v1`` ``speaking`` at the first played frame; per segment
+    ``va.playback.v1`` ``started`` before its first frame and ``completed``
+    after play-out (the WP6 ack identity, now with the owning ``turn_id``);
+    ``va.response.v1`` cumulative text of what is being heard; an accepted
+    interruption ends the playing segment ``cancelled`` (event
+    ``playback.cancelled``) and the state becomes ``interrupted``.
+    """
+    recorder = _Recorder()
+    publisher = RealtimePublisher(
+        recorder,  # type: ignore[arg-type]
+        session_id=SESSION_ID,
+        correlation_id=CORRELATION_ID,
+        clock=ManualClock(),
+        ids=SequentialIdGenerator(start=0xF00),
+    )
+    first, second = (
+        PlaybackAckIdentity(worker_generation=1, cancellation_generation=2, segment_id=seg)
+        for seg in TTS_SEGMENT_IDS
+    )
+    turn = TTS_TURN_ID
+    await publisher.publish_playback("started", first, EventType.PLAYBACK_STARTED, turn_id=turn)
+    await publisher.publish_state(AgentActivityState.SPEAKING)
+    await publisher.publish_response_segment("Namaste Arun!", turn_id=turn, segment_sequence=0)
+    await publisher.publish_playback("completed", first, EventType.PLAYBACK_COMPLETED, turn_id=turn)
+    await publisher.publish_playback("started", second, EventType.PLAYBACK_STARTED, turn_id=turn)
+    await publisher.publish_response_segment(
+        "Namaste Arun! Aaj main aapko ek lambi baat batati hoon.", turn_id=turn, segment_sequence=1
+    )
+    await publisher.publish_playback(
+        "cancelled", second, EventType.PLAYBACK_CANCELLED, turn_id=turn
+    )
+    await publisher.publish_state(AgentActivityState.INTERRUPTED, force=True)
+    names = [
+        "tts_playback_started_first_segment",
+        "tts_state_speaking",
+        "tts_response_heard_first_segment",
+        "tts_playback_completed_first_segment",
+        "tts_playback_started_second_segment",
+        "tts_response_heard_second_segment",
+        "tts_playback_cancelled_second_segment",
+        "tts_state_interrupted",
+    ]
+    return [_case(n, t, b, r) for n, (t, b, r) in zip(names, recorder.sent, strict=True)]
+
+
 def _control_case() -> dict[str, Any]:
     signal = EndRequestedSignal.build(
         event_id="00000000-0000-4000-8000-0000000000c1",
@@ -344,6 +398,7 @@ def agent_to_browser_cases() -> list[dict[str, Any]]:
         *_text_and_error_cases(),
         *asyncio.run(_stt_check_cases()),
         *asyncio.run(_llm_check_cases()),
+        *asyncio.run(_tts_check_cases()),
         _control_case(),
     ]
 

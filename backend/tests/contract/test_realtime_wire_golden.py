@@ -66,7 +66,7 @@ def test_every_agent_topic_is_covered() -> None:
         "va.metrics.v1",
         "va.control.v1",
     }
-    assert playback == {"started", "completed"}
+    assert playback == {"started", "completed", "cancelled"}
 
 
 @pytest.mark.parametrize("case", AGENT_CASES, ids=lambda c: c["name"])

@@ -169,6 +169,34 @@ class ConversationGate:
         self._fence.advance()  # fence first: no later output of the old turn is delivered
         if active.operation_id is not None:
             await self._engine.cancel(active.operation_id)
+        await self._on_superseded(active)
+
+    # ------------------------------------------------------ output hooks --
+    # Text delivery (WP8) is the default; the speech gate (WP9) overrides these.
+    async def _on_delivered(self, run: _TurnRun, segment: DeliveredSegment) -> None:
+        await self._publisher.publish_response_segment(
+            run.delivered_text(), turn_id=run.turn.turn_id, segment_sequence=segment.sequence
+        )
+
+    async def _on_superseded(self, run: _TurnRun) -> None:
+        return None
+
+    async def _settle_output(self, run: _TurnRun, result: GenerationResult) -> GenerationResult:
+        return result
+
+    async def _settle_fallback(
+        self, run: _TurnRun, spoken: tuple[DeliveredSegment, ...]
+    ) -> tuple[DeliveredSegment, ...]:
+        return spoken
+
+    def _record_output(self, run: _TurnRun, turn: ConversationTurn) -> ConversationTurn:
+        return turn
+
+    def _final_text(self, run: _TurnRun) -> str:
+        return run.delivered_text()
+
+    async def _close_output(self) -> None:
+        return None
 
     # ----------------------------------------------------------- respond --
     async def _respond(self, run: _TurnRun) -> None:
@@ -263,9 +291,7 @@ class ConversationGate:
 
         async def deliver(segment: DeliveredSegment) -> None:
             run.delivered.append(segment)
-            await self._publisher.publish_response_segment(
-                run.delivered_text(), turn_id=run.turn.turn_id, segment_sequence=segment.sequence
-            )
+            await self._on_delivered(run, segment)
 
         generator = ResponseGenerator(
             self._engine, fence=self._fence, guard=self._guard, deliver=deliver, clock=self._clock
@@ -344,6 +370,7 @@ class ConversationGate:
 
     # ------------------------------------------------------------ finish --
     async def _finish(self, run: _TurnRun, result: GenerationResult) -> None:
+        result = await self._settle_output(run, result)
         decision = resolve_completion(result)
         if decision.fallback is not None:
             spoken = await deliver_fallback(
@@ -353,11 +380,13 @@ class ConversationGate:
                 language=run.turn.language,
                 deliver=self._fallback_sink(run),
             )
+            spoken = await self._settle_fallback(run, spoken)
             if spoken:
                 run.turn = run.turn.record_fallback()
         turn = run.turn.record_generated(result.generated_text).record_finish_reason(
             result.finish_reason
         )
+        turn = self._record_output(run, turn)
         final = self._terminal_turn(turn, decision, superseded=result.cancelled)
         await self._evidence.save_turn(final)
         await self._publish_final(run, decision)
@@ -387,7 +416,12 @@ class ConversationGate:
             )
             if self._closing:
                 reason = InterruptionReason.SESSION_END
-            return turn.interrupt(reason=reason, phase=InterruptionPhase.THINKING)
+            phase = (
+                InterruptionPhase.SPEAKING
+                if turn.status is TurnStatus.AUDIO_STREAMING
+                else InterruptionPhase.THINKING
+            )
+            return turn.interrupt(reason=reason, phase=phase)
         return turn.fail()
 
     async def _publish_final(self, run: _TurnRun, decision: CompletionDecision) -> None:
@@ -395,7 +429,7 @@ class ConversationGate:
         if decision.fallback is not None and run.turn.fallback_used:
             fallback_id = decision.fallback.template_id
         await self._publisher.publish_response_final(
-            run.delivered_text(),
+            self._final_text(run),
             turn_id=run.turn.turn_id,
             status=decision.status,
             fallback_template_id=fallback_id,
@@ -456,6 +490,8 @@ class ConversationGate:
         self._fence.advance()
         if active is not None and active.operation_id is not None:
             await self._engine.cancel(active.operation_id)
+        if active is not None:
+            await self._on_superseded(active)
         pending = [task for task in self._tasks.values() if not task.done()]
         if pending:
             with suppress(TimeoutError):
@@ -464,6 +500,7 @@ class ConversationGate:
         for task in pending:
             task.cancel()
         await self._engine.close()
+        await self._close_output()
 
 
 def _budget_evidence(budget: HistoryBudget) -> dict[str, JsonValue]:

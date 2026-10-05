@@ -150,6 +150,8 @@ Sarvam TTS INR = synthesized characters / 1,000 × 3.00
 
 Every retry/cancelled synthesis that the provider reports as billable remains a separate cost attempt. Generated LLM characters that never reach TTS are not charged as TTS usage.
 
+WP9 live test budget (approved by the user 2026-10-05): INR 50.00 hard cap for all WP9 live Sarvam Bulbul v3 calls, at the approved ₹3.00/1,000-character rate (about 16,600 billable characters). Live samples are spoken/heard live by the user through the browser (Hindi, Hinglish, English); only generated/delivered text and usage/cost evidence are stored, never raw synthesized audio beyond the approved contract fields.
+
 Sources:
 
 - [Sarvam API pricing](https://www.sarvam.ai/api-pricing)

@@ -1,6 +1,6 @@
 """Local LiveKit agent-worker process (docs/14 §21; docs/05 §2, §21).
 
-``python -m voice_agent.agent_worker [--media-mode tone|echo|stt|llm]``
+``python -m voice_agent.agent_worker [--media-mode tone|echo|stt|llm|tts]``
 
 ``stt`` (WP7) runs local Silero VAD + the Turn Manager + Deepgram streaming
 STT, with no LLM or TTS, for sessions whose approved configuration has the
@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from voice_agent.agent_worker.entrypoint import (
+    SPEECH_MODES,
     WorkerConfig,
     handle_request,
     new_worker_instance_id,
@@ -153,7 +154,7 @@ def main(
     settings = outcome.loaded.settings
     configure_worker_logging(settings.app_log_level)
     mode = MediaMode(args.media_mode)
-    silero = prewarm() if mode in (MediaMode.STT, MediaMode.LLM) else None
+    silero = prewarm() if mode in SPEECH_MODES else None
     if silero is not None:
         logging.getLogger("voice_agent.agent_worker").info("worker.silero_prewarmed")
     config = WorkerConfig(

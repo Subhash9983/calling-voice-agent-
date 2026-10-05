@@ -206,6 +206,8 @@ SDK_PLACEMENT: dict[str, frozenset[str]] = {
     "deepgram": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
     # WP8: the OpenAI SDK only in the conversation adapter's binding module.
     "openai": frozenset({"conversation_adapters/openai/sdk_binding.py"}),
+    # WP9: the Sarvam SDK only in the TTS adapter's binding module.
+    "sarvamai": frozenset({"tts_adapters/sarvam/sdk_binding.py"}),
     "websockets": frozenset({"stt_adapters/deepgram/sdk_binding.py"}),
     "onnxruntime": frozenset({"speech_activity/silero.py"}),
     "livekit.plugins": frozenset({"speech_activity/silero.py"}),
@@ -245,3 +247,7 @@ def test_sdk_placement_scan_is_non_vacuous() -> None:
         encoding="utf-8"
     )
     assert _uses(openai_binding, "openai", "voice_agent.conversation_adapters.openai")
+    sarvam_binding = (PACKAGE_ROOT / "tts_adapters/sarvam/sdk_binding.py").read_text(
+        encoding="utf-8"
+    )
+    assert _uses(sarvam_binding, "sarvamai", "voice_agent.tts_adapters.sarvam")

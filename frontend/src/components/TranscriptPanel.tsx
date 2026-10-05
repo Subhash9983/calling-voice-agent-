@@ -70,6 +70,9 @@ export function TranscriptPanel({ user, agent, agentState, live }: TranscriptPan
   return (
     <section aria-labelledby="transcript-heading" className="panel panel-wide">
       <h2 id="transcript-heading">Conversation</h2>
+      <p role="note" className="disclosure">
+        Voices in this session are AI-generated, not a human agent.
+      </p>
       {/* The masthead already announces state changes politely; keep this one silent. */}
       <p
         role="status"

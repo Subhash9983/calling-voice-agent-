@@ -82,6 +82,14 @@ describe("sessionReducer", () => {
     expect(state.lastStateSequence).toBe(5);
   });
 
+  it("accepts the interrupted agent-activity state directly from va.state.v1 (sent after a playback cancellation/barge-in)", () => {
+    const message: InboundMessage = { topic: "va.state.v1", envelope: envelope(), state: "interrupted" };
+
+    const state = sessionReducer(INITIAL_SESSION_STATE, { type: "message", message });
+
+    expect(state.agentState).toBe("interrupted");
+  });
+
   it("interrupted playback replaces speaking; cancelled leaves state unchanged", () => {
     const speaking = run([{ type: "agent_state", state: "speaking" }]);
     const interrupted: InboundMessage = { topic: "va.playback.v1", envelope: envelope(), state: "interrupted", identity: IDENTITY };

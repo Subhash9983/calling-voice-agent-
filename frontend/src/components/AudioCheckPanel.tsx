@@ -10,7 +10,7 @@ function describeAudio(state: SessionViewState): string {
   const { agentAudio, audioVerified } = state;
   if (agentAudio.phase === "none") {
     return audioVerified
-      ? "The agent audio track ended. A signal was heard earlier in this session."
+      ? "The agent audio track ended. Audio was heard earlier in this session."
       : "Waiting for the agent audio track.";
   }
   if (agentAudio.phase === "blocked") {
@@ -20,7 +20,7 @@ function describeAudio(state: SessionViewState): string {
     return "The audio element reported a playback error.";
   }
   if (audioVerified) {
-    return "Audio signal received and played through the WebRTC audio element.";
+    return "Audio received and played through the WebRTC audio element.";
   }
   return agentAudio.receiving
     ? "Receiving agent audio packets; waiting for a non-silent signal."
@@ -28,9 +28,10 @@ function describeAudio(state: SessionViewState): string {
 }
 
 /**
- * Verifies the backend test tone without any custom audio path: the tone
- * plays only through the LiveKit-attached WebRTC element; this panel reads
- * receiver statistics to confirm that audible audio actually arrived.
+ * Verifies agent audio without any custom audio path: whether it is a test
+ * tone or real synthesized speech, it plays only through the
+ * LiveKit-attached WebRTC element, and this panel reads receiver statistics
+ * to confirm that audible audio actually arrived for every segment.
  */
 export function AudioCheckPanel({ state, onEnableAudio }: AudioCheckPanelProps): ReactElement {
   const blocked = state.agentAudio.phase === "blocked";
@@ -39,7 +40,7 @@ export function AudioCheckPanel({ state, onEnableAudio }: AudioCheckPanelProps):
       <h2 id="audio-heading">Audio check</h2>
       <p>
         <span className={state.audioVerified ? "chip chip-ok" : "chip"}>
-          {state.audioVerified ? "Tone verified" : "Not yet verified"}
+          {state.audioVerified ? "Audio verified" : "Not yet verified"}
         </span>
       </p>
       <p role="status" aria-live="polite">
@@ -51,8 +52,8 @@ export function AudioCheckPanel({ state, onEnableAudio }: AudioCheckPanelProps):
         </button>
       )}
       <p className="muted">
-        With a session active and the backend test tone enabled, you should hear the tone and this
-        panel should report a verified signal.
+        With a session active, you should hear the agent&apos;s audio (a test tone or a spoken
+        reply, depending on the configuration) and this panel should report a verified signal.
       </p>
     </section>
   );

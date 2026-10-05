@@ -66,6 +66,9 @@ class MediaMode(StrEnum):
     # WP8: the STT check plus one GPT-6 Luna generation per accepted turn,
     # delivered as ``va.response.v1`` text (no TTS).
     LLM = "llm"
+    # WP9: the LLM check with every authorized segment spoken by Sarvam
+    # Bulbul v3 through the agent-audio source (full voice pipeline).
+    TTS = "tts"
 
 
 @dataclass(frozen=True, slots=True)

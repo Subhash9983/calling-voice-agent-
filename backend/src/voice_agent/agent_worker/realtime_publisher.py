@@ -15,6 +15,8 @@
   carries ``response_completion_status`` and, for an application-owned
   phrase, ``fallback_template_id``. Reliable, per-session
   ``sequence_number``;
+- ``va.playback.v1`` (WP9 speech): ``started``/``completed``/``cancelled`` per
+  synthesized playback segment with the WP6 ack identity; reliable;
 - ``va.error.v1``: safe ``code``/``message``/``retryable`` only.
 
 Transcript text is sanitized before publication; nothing provider-specific
@@ -29,6 +31,7 @@ from pydantic import JsonValue
 
 from voice_agent.contracts.enums import AgentActivityState, ResponseCompletionStatus
 from voice_agent.contracts.events import EventEnvelope, EventType, EventVisibility
+from voice_agent.contracts.identity import PlaybackAckIdentity
 from voice_agent.contracts.transport import RealtimeTopic
 from voice_agent.ports.clock import Clock, IdGenerator
 from voice_agent.ports.transport import WorkerTransportPort
@@ -156,6 +159,24 @@ class RealtimePublisher:
             event_type, payload, turn_id=turn_id, sequence_number=self._response_sequence
         )
         await self._transport.send_event(RealtimeTopic.RESPONSE, envelope, reliable=True)
+
+    async def publish_playback(
+        self,
+        state: str,
+        identity: PlaybackAckIdentity,
+        event_type: EventType,
+        *,
+        turn_id: str | None = None,
+    ) -> None:
+        """``va.playback.v1`` (WP6 shape): ``state`` plus the ack identity the browser echoes."""
+        payload: dict[str, JsonValue] = {
+            "state": state,
+            "worker_generation": identity.worker_generation,
+            "cancellation_generation": identity.cancellation_generation,
+            "segment_id": identity.segment_id,
+        }
+        envelope = self._envelope(event_type, payload, turn_id=turn_id)
+        await self._transport.send_event(RealtimeTopic.PLAYBACK, envelope, reliable=True)
 
     async def publish_error(
         self, code: str, message: str, *, retryable: bool, turn_id: str | None = None

@@ -50,6 +50,14 @@ class FakeSessionTransport:
         self._subscribed = asyncio.Event()
         self.agent_audio_active = False
         self.closed = False
+        # Agent audio evidence (WP9): what reached "playback", in order.
+        self.published: list[PlaybackFrame] = []
+        self.finished: list[PlaybackAckIdentity] = []
+        self.clears = 0
+        self.playouts = 0
+        # When set, ``wait_for_playout`` blocks until released (or cleared).
+        self.hold_playout: asyncio.Event | None = None
+        self.playout_reached = asyncio.Event()
 
     @property
     def subscribers(self) -> int:
@@ -98,16 +106,30 @@ class FakeSessionTransport:
         return None
 
     async def publish_audio(self, frame: PlaybackFrame) -> None:
-        return None
+        self.published.append(frame)
+        await asyncio.sleep(0)
 
     async def finish_segment(self, identity: PlaybackAckIdentity) -> None:
-        return None
+        self.finished.append(identity)
 
     async def clear_playback(self) -> None:
-        return None
+        self.clears += 1
+        if self.hold_playout is not None:
+            self.hold_playout.set()
 
     async def wait_for_playout(self) -> None:
-        return None
+        self.playouts += 1
+        self.playout_reached.set()
+        if self.hold_playout is not None:
+            await self.hold_playout.wait()
+
+    def segments_published(self) -> list[str]:
+        """Segment IDs in the order their first frame was published."""
+        seen: list[str] = []
+        for frame in self.published:
+            if frame.identity.segment_id not in seen:
+                seen.append(frame.identity.segment_id)
+        return seen
 
     @property
     def browser_present(self) -> bool:

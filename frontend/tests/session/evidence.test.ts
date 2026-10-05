@@ -4,6 +4,8 @@ import {
   summarizeConversationOperations,
   summarizeCost,
   summarizeOperations,
+  summarizeTtsCost,
+  summarizeTtsOperations,
 } from "../../src/session/evidence";
 
 const op = (component: string, seconds?: number) => ({
@@ -102,5 +104,61 @@ describe("summarizeConversationCost", () => {
     expect(
       summarizeConversationCost({ calculationStatus: "partial", totalUsd: "0", components: [] }).conversationUsd,
     ).toBeNull();
+  });
+});
+
+const ttsOp = (count: { characters?: number; firstAudioMs?: number }) => ({
+  operationId: `op-tts-${String(count.characters ?? 0)}-${String(count.firstAudioMs ?? 0)}`,
+  component: "tts",
+  provider: "sarvam",
+  status: "succeeded",
+  usage: [
+    ...(count.characters === undefined ? [] : [{ unit: "synthesized_characters", quantity: count.characters }]),
+    ...(count.firstAudioMs === undefined ? [] : [{ unit: "first_audio_ms", quantity: count.firstAudioMs }]),
+  ],
+});
+
+describe("summarizeTtsOperations", () => {
+  it("counts only TTS operations, sums characters, and averages first-audio timing across segments", () => {
+    expect(
+      summarizeTtsOperations([
+        ttsOp({ characters: 13, firstAudioMs: 400 }),
+        ttsOp({ characters: 41, firstAudioMs: 600 }),
+        { operationId: "stt-1", component: "stt", provider: "p", status: "succeeded", usage: [] },
+      ]),
+    ).toEqual({ count: 2, charactersSynthesized: 54, firstAudioMs: 500 });
+  });
+
+  it("reports unavailable (never zero) usage when it is absent", () => {
+    expect(summarizeTtsOperations([ttsOp({})])).toEqual({
+      count: 1,
+      charactersSynthesized: null,
+      firstAudioMs: null,
+    });
+  });
+
+  it("returns null when there is no TTS operation", () => {
+    expect(summarizeTtsOperations([])).toBeNull();
+    expect(
+      summarizeTtsOperations([{ operationId: "s", component: "stt", provider: "p", status: "succeeded", usage: [] }]),
+    ).toBeNull();
+  });
+});
+
+describe("summarizeTtsCost", () => {
+  it("picks the TTS component amount", () => {
+    const cost = summarizeTtsCost({
+      calculationStatus: "final",
+      totalUsd: "1.00",
+      components: [
+        { component: "stt", label: "S", amountUsd: "0.1" },
+        { component: "tts", label: "T", amountUsd: "0.9" },
+      ],
+    });
+    expect(cost).toEqual({ ttsUsd: "0.9", calculationStatus: "final" });
+  });
+
+  it("has no TTS amount when the component is missing", () => {
+    expect(summarizeTtsCost({ calculationStatus: "partial", totalUsd: "0", components: [] }).ttsUsd).toBeNull();
   });
 });

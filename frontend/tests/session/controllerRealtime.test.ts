@@ -64,6 +64,49 @@ describe("playback acknowledgements", () => {
     await controller.stop();
   });
 
+  it("acknowledges multiple sequential segments (real multi-segment TTS), each with its own started/progress/completed", async () => {
+    const fake = fakeDeps();
+    const controller = await live(fake);
+    const SEGMENT_2: PlaybackAckIdentity = { ...IDENTITY, segmentId: "seg-2" };
+
+    fake.handlers().onMessage(playback("started"));
+    await vi.advanceTimersByTimeAsync(500);
+    fake.handlers().onMessage(playback("completed"));
+
+    fake.handlers().onMessage({
+      topic: "va.playback.v1",
+      envelope: envelope(),
+      state: "started",
+      identity: SEGMENT_2,
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    fake.handlers().onMessage({
+      topic: "va.playback.v1",
+      envelope: envelope(),
+      state: "completed",
+      identity: SEGMENT_2,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(sentTypes(fake)).toEqual([
+      "client.ready",
+      "playback.started",
+      "playback.progress",
+      "playback.progress",
+      "playback.completed",
+      "playback.started",
+      "playback.progress",
+      "playback.progress",
+      "playback.completed",
+    ]);
+    const calls = vi.mocked(fake.transport.sendClientEvent).mock.calls;
+    const firstCompleted = calls.find((call) => call[0].eventType === "playback.completed");
+    const secondStarted = calls.filter((call) => call[0].eventType === "playback.started")[1];
+    expect(firstCompleted?.[0].payload).toMatchObject({ segment_id: "seg-1" });
+    expect(secondStarted?.[0].payload).toMatchObject({ segment_id: "seg-2" });
+    await controller.stop();
+  });
+
   it("stops progress without a completion ack when playback is cancelled", async () => {
     const fake = fakeDeps();
     await live(fake);
@@ -73,6 +116,47 @@ describe("playback acknowledgements", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(sentTypes(fake)).toEqual(["client.ready", "playback.started"]);
+  });
+
+  it("tracks a two-segment turn (populated turn_id) where the second segment is cancelled by a barge-in, ending on interrupted (never stale speaking)", async () => {
+    const fake = fakeDeps();
+    const controller = await live(fake);
+    const TURN_ID = "00000000-0000-4000-8000-0000000000f1";
+    const segmentA: PlaybackAckIdentity = { workerGeneration: 1, cancellationGeneration: 2, segmentId: "seg-a" };
+    const segmentB: PlaybackAckIdentity = { workerGeneration: 1, cancellationGeneration: 2, segmentId: "seg-b" };
+    const withTurn = (state: "started" | "completed" | "cancelled", identity: PlaybackAckIdentity): InboundMessage => ({
+      topic: "va.playback.v1",
+      envelope: { ...envelope(), turnId: TURN_ID },
+      state,
+      identity,
+    });
+
+    fake.handlers().onMessage({ topic: "va.state.v1", envelope: { ...envelope(), turnId: null }, state: "speaking" });
+    fake.handlers().onMessage(withTurn("started", segmentA));
+    await vi.advanceTimersByTimeAsync(250);
+    fake.handlers().onMessage(withTurn("completed", segmentA));
+    expect(controller.getState().agentState).toBe("speaking");
+
+    fake.handlers().onMessage(withTurn("started", segmentB));
+    await vi.advanceTimersByTimeAsync(250);
+    fake.handlers().onMessage(withTurn("cancelled", segmentB));
+    // Cancellation of a mid-turn segment alone never flips the UI away from
+    // "speaking" on its own (docs/09 §13): the agent may still be about to
+    // speak more. The state message that follows is authoritative.
+    expect(controller.getState().agentState).toBe("speaking");
+
+    fake.handlers().onMessage({ topic: "va.state.v1", envelope: { ...envelope(), turnId: null }, state: "interrupted" });
+
+    expect(controller.getState().agentState).toBe("interrupted");
+    expect(sentTypes(fake)).toEqual([
+      "client.ready",
+      "playback.started",
+      "playback.progress",
+      "playback.completed",
+      "playback.started",
+      "playback.progress",
+    ]);
+    await controller.stop();
   });
 
   it("sends playback.failed when the audio element errors mid-segment", async () => {

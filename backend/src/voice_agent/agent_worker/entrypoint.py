@@ -35,6 +35,7 @@ from voice_agent.agent_worker.session_runner import (
     WorkerStores,
 )
 from voice_agent.agent_worker.stt_session import SttSessionDeps, stt_activity, uses_real_stt
+from voice_agent.agent_worker.tts_session import TtsSessionDeps, tts_activity, uses_real_tts
 from voice_agent.domain.agent_config import AgentConfigEnvironment
 from voice_agent.domain.worker_lease import WorkerClaim
 from voice_agent.events_and_latency.clock import SystemClock, UuidIdGenerator
@@ -61,6 +62,8 @@ ADMISSION_RETRY_S: Final = 5.0
 ADMISSION_RETRY_INTERVAL_S: Final = 0.25
 TRANSIENT_REJECTIONS: Final = frozenset({RejectReason.NOT_CLAIMABLE, RejectReason.ROOM_MISMATCH})
 AGENT_DISPLAY_NAME: Final = "agent"
+# Modes that run local VAD + STT (and need the prewarmed Silero model).
+SPEECH_MODES: Final = frozenset({MediaMode.STT, MediaMode.LLM, MediaMode.TTS})
 _LOGGER = logging.getLogger("voice_agent.agent_worker")
 
 
@@ -252,8 +255,8 @@ def session_activity(
     persistence: MongoPersistence,
     stores: WorkerStores,
 ) -> ActivityFactory | None:
-    """The STT (``stt``) or LLM (``llm``) check for a matching configuration, else ``None``."""
-    if config.media_mode not in (MediaMode.STT, MediaMode.LLM):
+    """The STT/LLM/TTS check for a matching configuration, else ``None`` (test tone)."""
+    if config.media_mode not in SPEECH_MODES:
         return None
     if not uses_real_stt(admission.config) or config.silero is None:
         _LOGGER.warning("worker.stt_mode_without_stt_configuration")
@@ -271,7 +274,12 @@ def session_activity(
     if not uses_real_llm(admission.config):
         _LOGGER.warning("worker.llm_mode_without_llm_configuration")
         return None
-    return llm_activity(admission, LlmSessionDeps(stt=deps))
+    if config.media_mode is MediaMode.LLM:
+        return llm_activity(admission, LlmSessionDeps(stt=deps))
+    if not uses_real_tts(admission.config):
+        _LOGGER.warning("worker.tts_mode_without_tts_configuration")
+        return None
+    return tts_activity(admission, TtsSessionDeps(llm=LlmSessionDeps(stt=deps)))
 
 
 async def run_job(

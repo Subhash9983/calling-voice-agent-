@@ -44,7 +44,12 @@ export class PlaybackAckTracker {
       }
       this.reset();
     } else if (state === "cancelled" || state === "interrupted" || state === "failed") {
-      this.reset();
+      // A stale/foreign message for a segment that is no longer active (e.g.
+      // a late cancellation racing a newer segment's `started`) must never
+      // stop tracking the segment that is genuinely playing now.
+      if (this.active === null || this.active.segmentId === identity.segmentId) {
+        this.reset();
+      }
     }
   }
 

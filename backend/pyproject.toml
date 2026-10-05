@@ -73,6 +73,7 @@ markers = [
     "livekit: uses LiveKit Cloud, metered (run with -m livekit and VOICE_AGENT_SECRETS_FILE set)",
     "deepgram: calls Deepgram live STT, metered (run with -m deepgram and VOICE_AGENT_SECRETS_FILE set)",
     "openai: calls OpenAI GPT-6 Luna live, metered (run with -m openai, VOICE_AGENT_SECRETS_FILE set, and VOICE_AGENT_OPENAI_LIVE_APPROVED=1 after a docs/15 budget is recorded)",
+    "sarvam: calls Sarvam Bulbul v3 live TTS, metered in INR (run with -m sarvam, VOICE_AGENT_SECRETS_FILE set, and VOICE_AGENT_SARVAM_LIVE_APPROVED=1; WP9 budget INR 50 in docs/15)",
 ]
 filterwarnings = ["error"]
 
