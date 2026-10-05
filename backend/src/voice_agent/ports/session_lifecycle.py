@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 
 from voice_agent.contracts.enums import SessionStatus
 from voice_agent.domain.worker_lease import LeaseToken, WorkerClaim
+from voice_agent.domain.worker_recovery import RecoveryAuthorization
 
 MAX_RECONCILE_BATCH = 100
 
@@ -43,6 +44,12 @@ class WorkerLeaseRepository(Protocol):
         """
         ...
 
+    async def claim_recovery(
+        self, session_id: str, claim: WorkerClaim, *, recovery_dispatch_id: str, now: datetime
+    ) -> LeaseToken | None:
+        """Replacement claim under the stored recovery authorization (WP10, docs/05 §21)."""
+        ...
+
     async def renew_lease(self, token: LeaseToken, *, now: datetime) -> LeaseToken | None:
         """Heartbeat compare-and-set; ``None`` when fenced, stale, or expired."""
         ...
@@ -56,6 +63,30 @@ class WorkerLeaseRepository(Protocol):
     ) -> int | None:
         """Reconciler fence of an expired lease; returns the new ``writer_epoch``."""
         ...
+
+
+@runtime_checkable
+class WorkerRecoveryRepository(Protocol):
+    """Reconciler-side worker-crash recovery operations (WP10, docs/05 §21)."""
+
+    async def start_recovery(
+        self, session_id: str, *, owner_instance_id: str, recovery_dispatch_id: str, now: datetime
+    ) -> RecoveryAuthorization | None: ...
+
+    async def renew_ownership(
+        self, session_id: str, *, owner_instance_id: str, owner_generation: int, now: datetime
+    ) -> RecoveryAuthorization | None: ...
+
+    async def take_over(
+        self,
+        session_id: str,
+        *,
+        expected_owner_generation: int,
+        owner_instance_id: str,
+        now: datetime,
+    ) -> RecoveryAuthorization | None: ...
+
+    async def abandon_open_turns(self, session_id: str, *, now: datetime) -> int: ...
 
 
 @runtime_checkable

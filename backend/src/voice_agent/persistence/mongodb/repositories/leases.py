@@ -105,6 +105,50 @@ class MongoWorkerLeaseRepository(MongoRepository):
         stored = await self._update_returning(filters, pipeline)
         return None if stored is None else _token(session_id, stored)
 
+    async def claim_recovery(
+        self, session_id: str, claim: WorkerClaim, *, recovery_dispatch_id: str, now: datetime
+    ) -> LeaseToken | None:
+        """Replacement claim under the stored recovery authorization (docs/05 §21 step 7).
+
+        Requires ``active``, the matching ``recovery_dispatch_id``, an unexpired
+        ``recovery_deadline_at``, and no termination request (never the
+        reconciler's ownership lease). Writes generation + 1 under a higher
+        writer epoch, resumes ``listening``, and unsets the authorization.
+        """
+        filters = {
+            "session_id": session_id,
+            "status": SessionStatus.ACTIVE.value,
+            "termination_request": {"$exists": False},
+            "recovery_authorization.recovery_dispatch_id": recovery_dispatch_id,
+            "$expr": {"$gt": ["$recovery_authorization.recovery_deadline_at", "$$NOW"]},
+        }
+        assignment = {
+            "worker_instance_id": literal(claim.worker_instance_id),
+            "livekit_job_id": literal(claim.livekit_job_id),
+            "generation": _increment("worker_assignment.generation"),
+            "writer_epoch": _increment("worker_assignment.writer_epoch"),
+            "lease_revision": _increment("worker_assignment.lease_revision"),
+            "claimed_at": literal(now),
+            "heartbeat_at": literal(now),
+            "lease_expires_at": literal(lease_expiry(now)),
+        }
+        pipeline: list[dict[str, Any]] = [
+            {"$set": {"_claim": assignment}},
+            {"$unset": [_ASSIGNMENT, "recovery_authorization"]},
+            {
+                "$set": {
+                    _ASSIGNMENT: "$_claim",
+                    "agent_activity_state": literal("listening"),
+                    "state_revision": {"$add": ["$state_revision", 1]},
+                    "updated_at": literal(now),
+                }
+            },
+            {"$unset": ["_claim"]},
+            reconcile_stage(),
+        ]
+        stored = await self._update_returning(filters, pipeline)
+        return None if stored is None else _token(session_id, stored)
+
     async def renew_lease(self, token: LeaseToken, *, now: datetime) -> LeaseToken | None:
         expires = lease_expiry(now)
         filters = {

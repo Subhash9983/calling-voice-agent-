@@ -28,6 +28,9 @@ class DispatchLocator(StrictModel):
     correlation_id: ExternalIdentifier
     agent_config_id: CanonicalId
     environment: Literal["development", "rd"]
+    # Present only on a worker-crash replacement dispatch (WP10, docs/05 §21):
+    # the reconciler's pre-generated ID the replacement claim must match.
+    recovery_dispatch_id: ExternalIdentifier | None = None
 
 
 def encode_dispatch_metadata(locator: DispatchLocator) -> str:

@@ -26,12 +26,20 @@ from typing import Final, Protocol
 from livekit import api
 from pydantic import SecretStr
 
-from voice_agent.contracts.dispatch import DispatchLocator, encode_dispatch_metadata
+from voice_agent.contracts.dispatch import (
+    DispatchLocator,
+    DispatchMetadataError,
+    decode_dispatch_metadata,
+    encode_dispatch_metadata,
+)
+from voice_agent.contracts.events import EventEnvelope
 from voice_agent.contracts.realtime_wire import (
     CONTROL_TOPIC,
     EndRequestedSignal,
+    encode_agent_message,
     encode_end_requested,
 )
+from voice_agent.contracts.transport import RealtimeTopic
 from voice_agent.ports.transport_control import (
     JOIN_TOKEN_LIFETIME_S,
     JoinCredential,
@@ -51,6 +59,7 @@ MAX_ROOM_PARTICIPANTS: Final = 2
 ROOM_EMPTY_TIMEOUT_S: Final = 60
 ROOM_DEPARTURE_TIMEOUT_S: Final = 20
 MICROPHONE_SOURCE: Final = "microphone"
+STATE_TOPIC: Final = RealtimeTopic.STATE.value
 
 
 class _RoomService(Protocol):
@@ -77,6 +86,8 @@ class _DispatchService(Protocol):
     async def get_dispatch(
         self, dispatch_id: str, room_name: str, /
     ) -> api.AgentDispatch | None: ...
+
+    async def list_dispatch(self, room_name: str, /) -> list[api.AgentDispatch]: ...
 
 
 class LiveKitServerApi(Protocol):
@@ -292,6 +303,43 @@ class LiveKitTransportControl:
         )
         await _call(self._client().room.send_data(request), code="data_send_failed")
 
+    async def ensure_recovery_dispatch(
+        self, allocation: TransportAllocation, locator: DispatchLocator, *, agent_name: str
+    ) -> str:
+        """One replacement dispatch per recovery dispatch ID (docs/05 §21 step 4)."""
+        recovery_id = locator.recovery_dispatch_id
+        if recovery_id is None:
+            raise TransportControlError("not a recovery locator", code="invalid", retryable=False)
+        client = self._client()
+        existing = await _call(
+            client.agent_dispatch.list_dispatch(allocation.room_name), code="inspection_failed"
+        )
+        for dispatch in existing:
+            if _recovery_id_of(dispatch.metadata) == recovery_id:
+                return dispatch.id
+        request = api.CreateAgentDispatchRequest(
+            agent_name=agent_name,
+            room=allocation.room_name,
+            metadata=encode_dispatch_metadata(locator),
+        )
+        created = await _call(
+            client.agent_dispatch.create_dispatch(request), code="dispatch_failed"
+        )
+        return created.id
+
+    async def notify_recovering(
+        self, allocation: TransportAllocation, envelope: EventEnvelope
+    ) -> None:
+        """``agent.recovering`` on ``va.state.v1`` to the expected browser (docs/06 §11)."""
+        request = api.SendDataRequest(
+            room=allocation.room_name,
+            data=encode_agent_message(envelope, reliable=True),
+            kind=api.DataPacket.Kind.RELIABLE,
+            destination_identities=[allocation.participant_identity],
+            topic=STATE_TOPIC,
+        )
+        await _call(self._client().room.send_data(request), code="data_send_failed")
+
     async def release_session(self, allocation: TransportAllocation) -> None:
         """Delete the dispatch then the room; every step runs even if one fails."""
         failed = False
@@ -314,6 +362,13 @@ class LiveKitTransportControl:
         client, self._api = self._api, None
         if client is not None:
             await _tolerant(client.aclose())
+
+
+def _recovery_id_of(metadata: str) -> str | None:
+    try:
+        return decode_dispatch_metadata(metadata).recovery_dispatch_id
+    except DispatchMetadataError:
+        return None
 
 
 async def _tolerant(awaitable: Awaitable[object]) -> bool:

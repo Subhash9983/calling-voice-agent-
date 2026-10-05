@@ -12,8 +12,11 @@ applies :func:`reconcile_action` under ``state_revision`` compare-and-set
 - an ``ending`` session without a live worker completes as ``ended`` or
   controlled ``failed`` from its recorded reason (missing end packet or no
   worker still reaches a terminal state);
-- an ``active`` session whose worker lease expired is fenced (``writer_epoch``
-  increment) and failed: worker-crash recovery is not part of this build.
+- an ``active`` session whose worker lease expired gets at most one
+  higher-generation worker-crash recovery (WP10, :mod:`.recovery`) when the
+  recovery store and a recovery-capable transport exist; otherwise, or for a
+  second crash, an exhausted 20 s recovery deadline, or a missing browser, it
+  is fenced (``writer_epoch`` increment) and failed.
 
 A terminal session's room/dispatch is then deleted best-effort; a cleanup
 failure is logged with a safe code and never reopens the session.
@@ -23,12 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
 from voice_agent.contracts.enums import DisconnectReason, SessionStatus
 from voice_agent.contracts.events import EventSeverity, EventType
+from voice_agent.control_api.recovery import WorkerRecoveryCoordinator
 from voice_agent.control_api.runtime import ControlPlaneRuntime, ControlPlaneStores
 from voice_agent.control_api.services.common import (
     MAX_CAS_ATTEMPTS,
@@ -65,6 +70,14 @@ class SessionReconciler:
     def __init__(self, runtime: ControlPlaneRuntime) -> None:
         self._runtime = runtime
         self._nudges = runtime.nudges
+        # Opaque per-process owner identity for recovery authorizations.
+        self._recovery = WorkerRecoveryCoordinator(
+            runtime, instance_id=f"reconciler-{uuid.uuid4().hex[:16]}"
+        )
+
+    @property
+    def recovery(self) -> WorkerRecoveryCoordinator:
+        return self._recovery
 
     def _stores(self) -> ControlPlaneStores:
         return self._runtime.require_stores()
@@ -112,6 +125,9 @@ class SessionReconciler:
         candidates = {c.session_id: c.writer_epoch for c in await self._candidates()}
         for session_id in self._nudges.drain():
             candidates.setdefault(session_id, None)
+        # Owned recoveries are renewed every pass (ownership lease 10 s, pass 5 s).
+        for session_id in sorted(self._recovery.owned):
+            candidates.setdefault(session_id, None)
         actions = []
         for session_id, writer_epoch in candidates.items():
             actions.append(await self.reconcile_session(session_id, writer_epoch=writer_epoch))
@@ -125,8 +141,13 @@ class SessionReconciler:
         for _attempt in range(MAX_CAS_ATTEMPTS + 1):
             record = await self._runtime.bounded(self._stores().sessions.get(session_id))
             if record is None:
+                self._recovery.forget(session_id)
                 return taken
-            action = reconcile_action(record, self._runtime.clock.utc_now())
+            now = self._runtime.clock.utc_now()
+            capability = self._recovery.capability(record)
+            action = reconcile_action(record, now, recovery=capability)
+            if action is not ReconcileAction.CONTINUE_RECOVERY:
+                self._recovery.forget(session_id)
             if action is ReconcileAction.NONE:
                 return taken
             if await self._apply(record, action, writer_epoch):
@@ -141,6 +162,8 @@ class SessionReconciler:
     ) -> bool:
         if action is ReconcileAction.REQUEST_MAXIMUM_DURATION_END:
             return await self._request_maximum_duration_end(record)
+        if action in _RECOVERY_STEPS:
+            return await self._recovery_step(record, action)
         await self._fence(record, writer_epoch)
         now = self._runtime.clock.utc_now()
         if action is ReconcileAction.FINALIZE_END:
@@ -151,6 +174,22 @@ class SessionReconciler:
             return False
         await self._terminal_evidence(final, action)
         return True
+
+    async def _recovery_step(self, record: SessionRecord, action: ReconcileAction) -> bool:
+        recovery = self._recovery
+        if action is ReconcileAction.START_RECOVERY:
+            return await recovery.start(record)
+        if action is ReconcileAction.TAKE_OVER_RECOVERY:
+            return await recovery.take_over(record)
+        if action is ReconcileAction.CONTINUE_RECOVERY:
+            return await recovery.continue_(record)
+        return await recovery.fail(record, cause="recovery_deadline_passed")
+
+    async def _release(self, record: SessionRecord) -> None:
+        binding = record.transport
+        transport = None if binding is None else self._runtime.transports.get(binding.provider)
+        if binding is not None and transport is not None and transport.is_available:
+            await release_transport(self._runtime, transport, allocation_of(binding))
 
     async def _request_maximum_duration_end(self, record: SessionRecord) -> bool:
         runtime = self._runtime
@@ -198,12 +237,26 @@ class SessionReconciler:
             else EventSeverity.ERROR,
             payload={"disconnect_reason": reason},
         )
-        binding = final.transport
-        transport = None if binding is None else runtime.transports.get(binding.provider)
-        if binding is not None and transport is not None and transport.is_available:
-            await release_transport(runtime, transport, allocation_of(binding))
+        if action is ReconcileAction.FAIL_WORKER_LOST:
+            await self._recovery.abandon_open_turns(final)
+        await self._release(final)
 
 
 # Actions after which the same session may need another step in this pass
 # (a maximum-duration end without a live worker can be finalized at once).
-_CONTINUES: Final = frozenset({ReconcileAction.REQUEST_MAXIMUM_DURATION_END})
+# A started or taken-over recovery continues at once (renew + replacement dispatch).
+_CONTINUES: Final = frozenset(
+    {
+        ReconcileAction.REQUEST_MAXIMUM_DURATION_END,
+        ReconcileAction.START_RECOVERY,
+        ReconcileAction.TAKE_OVER_RECOVERY,
+    }
+)
+_RECOVERY_STEPS: Final = frozenset(
+    {
+        ReconcileAction.START_RECOVERY,
+        ReconcileAction.CONTINUE_RECOVERY,
+        ReconcileAction.TAKE_OVER_RECOVERY,
+        ReconcileAction.FAIL_RECOVERY_EXHAUSTED,
+    }
+)

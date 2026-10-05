@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from voice_agent.contracts.dispatch import DispatchLocator
+from voice_agent.contracts.events import EventEnvelope
 from voice_agent.contracts.realtime_wire import EndRequestedSignal
 
 JOIN_TOKEN_LIFETIME_S = 600
@@ -111,4 +112,29 @@ class TransportControl(Protocol):
 
     async def aclose(self) -> None:
         """Close control-plane resources idempotently."""
+        ...
+
+
+@runtime_checkable
+class RecoveryTransportControl(TransportControl, Protocol):
+    """Optional worker-crash recovery capability (WP10, docs/05 §21, docs/06 §11).
+
+    Implementations normalize failures to :class:`TransportControlError`.
+    """
+
+    async def ensure_recovery_dispatch(
+        self, allocation: TransportAllocation, locator: DispatchLocator, *, agent_name: str
+    ) -> str:
+        """Create the replacement dispatch once per ``locator.recovery_dispatch_id``.
+
+        Idempotent: an existing dispatch carrying the same recovery dispatch ID
+        is reused, so a retry after a reconciler crash never creates a second.
+        Returns the transport's dispatch ID.
+        """
+        ...
+
+    async def notify_recovering(
+        self, allocation: TransportAllocation, envelope: EventEnvelope
+    ) -> None:
+        """Best-effort ``agent.recovering`` state message to the expected browser."""
         ...

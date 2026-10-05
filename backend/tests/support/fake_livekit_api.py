@@ -62,6 +62,14 @@ class FakeDispatches:
         self._state.deleted_dispatches.append(dispatch_id)
         return api.AgentDispatch(id=dispatch_id)
 
+    async def list_dispatch(self, room_name: str, /) -> list[api.AgentDispatch]:
+        self._state.check("list_dispatch")
+        return [
+            api.AgentDispatch(id=f"AD_{index + 1}", room=req.room, metadata=req.metadata)
+            for index, req in enumerate(self._state.dispatches)
+            if req.room == room_name
+        ]
+
     async def get_dispatch(self, dispatch_id: str, room_name: str, /) -> api.AgentDispatch | None:
         self._state.check("get_dispatch")
         if dispatch_id in self._state.deleted_dispatches:

@@ -178,6 +178,78 @@ describe("sessionReducer", () => {
     expect(state.agentResponse.map((line) => line.text)).toEqual(["delivered answer"]);
   });
 
+  it("barge-in: a fresh user turn is attributed correctly with zero bleed-through from the cancelled prior turn", () => {
+    const turnAResponsePartial: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a1", turnId: "tA" }),
+      text: "Let me look that",
+      isFinal: false,
+      completionStatus: null,
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const afterPartial = sessionReducer(INITIAL_SESSION_STATE, {
+      type: "message",
+      message: turnAResponsePartial,
+    });
+
+    const interrupted: InboundMessage = {
+      topic: "va.playback.v1",
+      envelope: envelope({ turnId: "tA" }),
+      state: "interrupted",
+      identity: IDENTITY,
+    };
+    const afterInterrupt = sessionReducer(afterPartial, { type: "message", message: interrupted });
+    expect(afterInterrupt.agentResponse).toHaveLength(0);
+
+    const turnBTranscriptFinal: InboundMessage = {
+      topic: "va.transcript.v1",
+      envelope: envelope({ eventId: "b1", turnId: "tB" }),
+      text: "actually tell me the weather",
+      isFinal: true,
+    };
+    const turnBResponseFinal: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "b2", turnId: "tB" }),
+      text: "It is sunny today.",
+      isFinal: true,
+      completionStatus: "completed",
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const afterTurnB = [turnBTranscriptFinal, turnBResponseFinal].reduce(
+      (current, message) => sessionReducer(current, { type: "message", message }),
+      afterInterrupt,
+    );
+
+    // A late/stale delta from the cancelled turn A must never bleed into the
+    // transcript after turn B's content is already delivered (docs/08 §13).
+    const lateTurnAResponse: InboundMessage = {
+      topic: "va.response.v1",
+      envelope: envelope({ eventId: "a2", turnId: "tA" }),
+      text: "...the weather is",
+      isFinal: false,
+      completionStatus: null,
+      fallbackTemplateId: null,
+      segmentSequence: null,
+    };
+    const lateTurnATranscript: InboundMessage = {
+      topic: "va.transcript.v1",
+      envelope: envelope({ eventId: "a3", turnId: "tA" }),
+      text: "leftover from the cancelled turn",
+      isFinal: false,
+    };
+    const finalState = [lateTurnAResponse, lateTurnATranscript].reduce(
+      (current, message) => sessionReducer(current, { type: "message", message }),
+      afterTurnB,
+    );
+
+    expect(finalState.agentResponse.map((line) => line.text)).toEqual(["It is sunny today."]);
+    expect(finalState.userTranscript.map((line) => line.text)).toEqual(["actually tell me the weather"]);
+    expect(finalState.agentResponse.every((line) => line.turnId === "tB")).toBe(true);
+    expect(finalState.userTranscript.every((line) => line.turnId === "tB")).toBe(true);
+  });
+
   it("records agent errors and counts rejected messages", () => {
     const error: InboundMessage = { topic: "va.error.v1", envelope: envelope(), code: "c", message: "Try again", retryable: true };
 

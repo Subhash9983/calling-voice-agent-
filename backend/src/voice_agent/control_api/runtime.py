@@ -43,6 +43,7 @@ from voice_agent.persistence.mongodb.repositories.leases import (
     MongoSessionReconciliationRepository,
     MongoWorkerLeaseRepository,
 )
+from voice_agent.persistence.mongodb.repositories.recovery import MongoWorkerRecoveryRepository
 from voice_agent.persistence.mongodb.stores import (
     mongo_control_plane_stores,
     verify_persistence,
@@ -60,6 +61,7 @@ from voice_agent.ports.control_plane import (
 from voice_agent.ports.session_lifecycle import (
     SessionReconciliationRepository,
     WorkerLeaseRepository,
+    WorkerRecoveryRepository,
 )
 from voice_agent.ports.transport_control import TransportControl
 from voice_agent.provider_registry.catalog import ApprovedAgentConfigCatalog
@@ -91,6 +93,8 @@ class ControlPlaneStores:
     # Session reconciler dependencies (docs/05 §21); absent -> no reconciler.
     reconciliation: SessionReconciliationRepository | None = None
     leases: WorkerLeaseRepository | None = None
+    # Worker-crash recovery (WP10, docs/05 §21); absent -> crashed workers fail.
+    recovery: WorkerRecoveryRepository | None = None
     # ``cost_entries`` reads (WP7); absent -> the cost diagnostic stays not-ready.
     costs: CostReader | None = None
 
@@ -120,6 +124,7 @@ def mongo_stores(persistence: MongoPersistence, settings: BootstrapSettings) -> 
         events=stores.events,
         reconciliation=MongoSessionReconciliationRepository(persistence),
         leases=MongoWorkerLeaseRepository(persistence),
+        recovery=MongoWorkerRecoveryRepository(persistence),
         costs=MongoCostEntryStore(persistence),
     )
 

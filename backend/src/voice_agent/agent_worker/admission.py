@@ -8,7 +8,10 @@ provider can start:
 - the locator parses, and matches the session's environment, configuration
   and correlation ID;
 - the session is ``connecting`` with no termination request, no live worker
-  lease, and time left before its maximum duration;
+  lease, and time left before its maximum duration; or, for a worker-crash
+  replacement (WP10, docs/05 §3, §21), ``active`` with a stored recovery
+  authorization whose ``recovery_dispatch_id`` matches the job's locator and
+  whose recovery deadline has not passed;
 - the job's room is the session's backend-owned room and the session has an
   opaque agent identity (used verbatim as the participant identity at
   ``req.accept``);
@@ -71,6 +74,10 @@ class JobAdmission:
     browser_identity: str
     room_name: str
 
+    @property
+    def is_recovery(self) -> bool:
+        return self.locator.recovery_dispatch_id is not None
+
 
 def _locator(metadata: str, app_env: str) -> DispatchLocator:
     try:
@@ -91,12 +98,26 @@ def _check_session(record: SessionRecord, locator: DispatchLocator, now: datetim
         raise AdmissionRejectedError(RejectReason.LOCATOR_MISMATCH)
     if record.termination_request is not None:
         raise AdmissionRejectedError(RejectReason.TERMINATION_REQUESTED)
-    if record.status is not SessionStatus.CONNECTING:
+    if locator.recovery_dispatch_id is not None:
+        _check_recovery(record, locator.recovery_dispatch_id, now)
+    elif record.status is not SessionStatus.CONNECTING or record.recovery_authorization is not None:
         raise AdmissionRejectedError(RejectReason.NOT_CLAIMABLE)
     if record.has_live_worker(now):
         raise AdmissionRejectedError(RejectReason.WORKER_ALREADY_ASSIGNED)
     if record.maximum_duration_reached(now):
         raise AdmissionRejectedError(RejectReason.MAXIMUM_DURATION_REACHED)
+
+
+def _check_recovery(record: SessionRecord, recovery_dispatch_id: str, now: datetime) -> None:
+    """A replacement job must match the stored authorization (not its ownership lease)."""
+    authorization = record.recovery_authorization
+    if (
+        record.status is not SessionStatus.ACTIVE
+        or authorization is None
+        or authorization.recovery_dispatch_id != recovery_dispatch_id
+        or authorization.deadline_passed(now)
+    ):
+        raise AdmissionRejectedError(RejectReason.NOT_CLAIMABLE)
 
 
 def _check_config(config: AgentConfig | None, record: SessionRecord) -> AgentConfig:

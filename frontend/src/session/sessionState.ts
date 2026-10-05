@@ -55,6 +55,15 @@ export interface SessionViewState {
   readonly events: readonly SessionEventItem[];
   readonly evidence: EvidenceState;
   readonly error: SessionError | null;
+  /**
+   * Turn IDs whose playback was cancelled/interrupted (docs/01 §7 "Audio
+   * from an accepted interrupted turn never resumes automatically"). A
+   * late transcript/response delta that still names one of these turns is
+   * a stale generation (docs/08 §13) and must never bleed into a newer
+   * turn's attributed content. Bounded so long sessions cannot grow this
+   * without limit.
+   */
+  readonly cancelledTurnIds: readonly string[];
 }
 
 export const INITIAL_SESSION_STATE: SessionViewState = {
@@ -76,7 +85,18 @@ export const INITIAL_SESSION_STATE: SessionViewState = {
   events: [],
   evidence: NO_EVIDENCE,
   error: null,
+  cancelledTurnIds: [],
 };
+
+/** Keeps the most recent cancelled turn IDs only; old ones cannot recur. */
+const MAX_CANCELLED_TURNS = 20;
+
+function addCancelledTurn(turnIds: readonly string[], turnId: string): readonly string[] {
+  if (turnIds.includes(turnId)) {
+    return turnIds;
+  }
+  return [...turnIds, turnId].slice(-MAX_CANCELLED_TURNS);
+}
 
 export type SessionAction =
   | { readonly type: "starting" }
@@ -121,6 +141,11 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
       if (sequence !== null && sequence <= state.lastTranscriptSequence) {
         return state;
       }
+      if (envelope.turnId !== null && state.cancelledTurnIds.includes(envelope.turnId)) {
+        // Late delta from an already-interrupted turn: never bleed into a
+        // newer turn's transcript (docs/01 §7, docs/08 §13).
+        return state;
+      }
       return {
         ...state,
         lastTranscriptSequence: sequence ?? state.lastTranscriptSequence,
@@ -133,6 +158,11 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
       };
     }
     case "va.response.v1": {
+      if (envelope.turnId !== null && state.cancelledTurnIds.includes(envelope.turnId)) {
+        // Late delta from an already-interrupted turn: never bleed into a
+        // newer turn's response (docs/01 §7, docs/08 §13).
+        return state;
+      }
       const truncated =
         message.completionStatus === "truncated_partial" || message.completionStatus === "truncated_fallback";
       return {
@@ -148,17 +178,23 @@ function applyMessage(state: SessionViewState, message: InboundMessage): Session
     }
     case "va.error.v1":
       return { ...state, lastAgentError: message.message };
-    case "va.playback.v1":
+    case "va.playback.v1": {
       // A cancelled or interrupted playback never leaves a stale "speaking"
       // state, and a still-streaming assistant line from that generation
       // must not linger as if it were still in progress (docs/08 §13).
-      return message.state === "cancelled" || message.state === "interrupted"
-        ? {
-            ...state,
-            agentState: message.state === "interrupted" ? "interrupted" : state.agentState,
-            agentResponse: dropProvisionalLine(state.agentResponse),
-          }
-        : state;
+      if (message.state !== "cancelled" && message.state !== "interrupted") {
+        return state;
+      }
+      return {
+        ...state,
+        agentState: message.state === "interrupted" ? "interrupted" : state.agentState,
+        agentResponse: dropProvisionalLine(state.agentResponse),
+        cancelledTurnIds:
+          envelope.turnId === null
+            ? state.cancelledTurnIds
+            : addCancelledTurn(state.cancelledTurnIds, envelope.turnId),
+      };
+    }
     case "va.metrics.v1":
       return state;
   }

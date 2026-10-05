@@ -34,6 +34,7 @@ from voice_agent.domain.errors import (
     LifecycleStateError,
 )
 from voice_agent.domain.session import SESSION_TRANSITIONS, TERMINAL_SESSION_STATES
+from voice_agent.domain.worker_recovery import RecoveryAuthorization
 
 MAX_JOIN_TOKEN_REQUESTS = 10
 FINGERPRINT_PREFIX = "sha256:"
@@ -235,6 +236,10 @@ class SessionRecord(StrictModel):
     # (docs/02 §6 ``worker_assignment.lease_expires_at``). A record replace
     # never writes it; only the lease repository does.
     worker_lease_expires_at: UtcDatetime | None = None
+    # Store-owned and read-only here as well (docs/05 §21): the stored
+    # worker-crash recovery authorization and the recovery count.
+    recovery_authorization: RecoveryAuthorization | None = None
+    worker_recovery_count: Annotated[int, Field(strict=True, ge=0)] = 0
 
     @property
     def is_terminal(self) -> bool:

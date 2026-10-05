@@ -89,15 +89,35 @@ class WorkerStores:
 TransportFactory = Callable[[int], SessionTransportPort]
 
 
+EndRequest = Callable[[DisconnectReason], None]
+LifecycleListener = Callable[[TransportEvent], None]
+
+
+def _ignore_end(_reason: DisconnectReason) -> None:
+    return None
+
+
+def _ignore_listener(_listener: LifecycleListener) -> None:
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ActivityContext:
-    """What a session activity (media check, STT check, ...) may use; nothing durable."""
+    """What a session activity (media check, STT check, ...) may use; nothing durable.
+
+    ``request_end`` lets the activity end the session itself (idle timeout,
+    the time-limit notice) through the runner's single terminal path;
+    ``add_lifecycle_listener`` forwards transport lifecycle events (browser
+    left/reconnected) that the runner alone consumes.
+    """
 
     transport: SessionTransportPort
     session_id: str
     correlation_id: str
     worker_generation: int
     lease_hint: Callable[[], int]
+    request_end: EndRequest = _ignore_end
+    add_lifecycle_listener: Callable[[LifecycleListener], None] = _ignore_listener
 
 
 ActivityFactory = Callable[[ActivityContext], Awaitable[None]]
@@ -149,17 +169,11 @@ class WorkerSessionRunner:
         self._ready = asyncio.Event()
         self._joined = False
         self._tasks: set[asyncio.Future[None]] = set()
+        self._listeners: list[LifecycleListener] = []
 
     # ----------------------------------------------------------------- run --
     async def run(self) -> RunResult:
-        token = await _bounded(
-            self._stores.leases.claim_initial(
-                self._session_id,
-                self._claim,
-                expected_revision=self._admission.record.state_revision,
-                now=self._stores.clock.utc_now(),
-            )
-        )
+        token = await _bounded(self._claim_lease())
         if token is None:
             return RunResult(RunOutcome.REJECTED)
         keeper = self._keeper(token)
@@ -174,6 +188,26 @@ class WorkerSessionRunner:
                     await keeper_task
             except TimeoutError:
                 keeper_task.cancel()
+
+    def _claim_lease(self) -> Awaitable[LeaseToken | None]:
+        """Generation-1 claim, or the replacement claim under a recovery authorization."""
+        leases, now = self._stores.leases, self._stores.clock.utc_now()
+        recovery_id = self._admission.locator.recovery_dispatch_id
+        if recovery_id is not None:
+            return leases.claim_recovery(
+                self._session_id, self._claim, recovery_dispatch_id=recovery_id, now=now
+            )
+        return leases.claim_initial(
+            self._session_id,
+            self._claim,
+            expected_revision=self._admission.record.state_revision,
+            now=now,
+        )
+
+    @property
+    def _expected_status(self) -> SessionStatus:
+        recovering = self._admission.locator.recovery_dispatch_id is not None
+        return SessionStatus.ACTIVE if recovering else SessionStatus.CONNECTING
 
     def _keeper(self, token: LeaseToken) -> LeaseKeeper:
         return LeaseKeeper(
@@ -246,6 +280,11 @@ class WorkerSessionRunner:
             self._on_transport_event(event)
 
     def _on_transport_event(self, event: TransportEvent) -> None:
+        for listener in self._listeners:
+            try:
+                listener(event)
+            except Exception:  # a listener never breaks the runner's lifecycle handling
+                _LOGGER.warning("worker.lifecycle_listener_failed")
         kind = event.kind
         if kind is TransportEventKind.BROWSER_JOINED:
             self._joined = True
@@ -272,6 +311,10 @@ class WorkerSessionRunner:
         if request is not None and request.revision == revision:
             self._stop.put_nowait((_Stop.END, request.reason))
 
+    def _request_end(self, reason: DisconnectReason) -> None:
+        """An activity-initiated end (idle timeout, time limit) joins the stop queue."""
+        self._stop.put_nowait((_Stop.END, reason))
+
     async def _watch_keeper(self, keeper: LeaseKeeper) -> None:
         fenced = asyncio.create_task(keeper.fenced.wait())
         ended = asyncio.create_task(keeper.end_requested.wait())
@@ -295,7 +338,7 @@ class WorkerSessionRunner:
     async def _startup_barrier(self) -> DisconnectReason | None:
         """Re-read the durable request immediately before activation (docs/05 §3)."""
         record = await _bounded(self._stores.sessions.get(self._session_id))
-        if record is None or record.status is not SessionStatus.CONNECTING:
+        if record is None or record.status is not self._expected_status:
             return DisconnectReason.TRANSPORT_ERROR if record is None else DisconnectReason.UNKNOWN
         request = record.termination_request
         return None if request is None else request.reason
@@ -303,8 +346,14 @@ class WorkerSessionRunner:
     async def _activate(self, token: LeaseToken) -> bool:
         repository = self._stores.worker_sessions(token)
         session = await _bounded(repository.get(self._session_id))
-        if session is None or session.status is not SessionStatus.CONNECTING:
+        if session is None or session.status is not self._expected_status:
             return False
+        if self._expected_status is SessionStatus.ACTIVE:
+            # Replacement worker: the claim already resumed ``listening``; no
+            # greeting replay, no stale audio (docs/05 §21 step 8).
+            await self._emit(EventType.WORKER_RECOVERY_CLAIMED, deterministic=True)
+            await self._emit(EventType.TRANSPORT_CONNECTED, deterministic=False)
+            return True
         if not await _attempt(repository.save(session.transition_to(SessionStatus.ACTIVE))):
             return False
         await self._emit(EventType.SESSION_ACTIVE, deterministic=True)
@@ -320,6 +369,8 @@ class WorkerSessionRunner:
                     correlation_id=self._admission.record.correlation_id,
                     worker_generation=keeper.token.generation,
                     lease_hint=keeper.lease_valid_for_ms,
+                    request_end=self._request_end,
+                    add_lifecycle_listener=self._listeners.append,
                 )
             )
             return

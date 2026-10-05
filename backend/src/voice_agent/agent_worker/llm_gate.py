@@ -51,7 +51,7 @@ from voice_agent.contracts.enums import (
 from voice_agent.contracts.events import EventSeverity, EventType
 from voice_agent.contracts.policies import RetryPolicy
 from voice_agent.domain.operation import ProviderOperation
-from voice_agent.domain.turn import ConversationTurn
+from voice_agent.domain.turn import ConversationTurn, InterruptionTiming
 from voice_agent.orchestration.generations import FenceVerdict, GenerationFence
 from voice_agent.orchestration.history_budget import HistoryBudget, budget_history
 from voice_agent.orchestration.response_generation import (
@@ -409,20 +409,29 @@ class ConversationGate:
         if decision.outcome is TurnOutcome.COMPLETED:
             return turn.complete(decision.status, no_speakable_output=True)
         if decision.outcome is TurnOutcome.INTERRUPTED:
-            reason = (
-                InterruptionReason.USER_BARGE_IN
-                if superseded
-                else (InterruptionReason.SYSTEM_CANCEL)
-            )
-            if self._closing:
-                reason = InterruptionReason.SESSION_END
-            phase = (
-                InterruptionPhase.SPEAKING
-                if turn.status is TurnStatus.AUDIO_STREAMING
-                else InterruptionPhase.THINKING
-            )
-            return turn.interrupt(reason=reason, phase=phase)
+            reason, phase, timing = self._interruption_details(turn, superseded=superseded)
+            return turn.interrupt(reason=reason, phase=phase, timing=timing)
         return turn.fail()
+
+    def _turn_event_extra(self, turn: ConversationTurn) -> dict[str, JsonValue]:
+        """Additional safe turn-event fields (the WP10 gate adds interruption timing)."""
+        return {}
+
+    def _interruption_details(
+        self, turn: ConversationTurn, *, superseded: bool
+    ) -> tuple[InterruptionReason, InterruptionPhase, InterruptionTiming | None]:
+        """Reason, phase, and (WP10) acceptance-to-silence timing of an interrupted turn."""
+        reason = (
+            InterruptionReason.USER_BARGE_IN if superseded else InterruptionReason.SYSTEM_CANCEL
+        )
+        if self._closing:
+            reason = InterruptionReason.SESSION_END
+        phase = (
+            InterruptionPhase.SPEAKING
+            if turn.status is TurnStatus.AUDIO_STREAMING
+            else InterruptionPhase.THINKING
+        )
+        return reason, phase, None
 
     async def _publish_final(self, run: _TurnRun, decision: CompletionDecision) -> None:
         fallback_id = None
@@ -449,6 +458,8 @@ class ConversationGate:
             payload={
                 "response_completion_status": decision.status.value,
                 "fallback_used": turn.fallback_used,
+                **interruption_evidence(turn),
+                **self._turn_event_extra(turn),
             },
         )
 
@@ -501,6 +512,21 @@ class ConversationGate:
             task.cancel()
         await self._engine.close()
         await self._close_output()
+
+
+def interruption_evidence(turn: ConversationTurn) -> dict[str, JsonValue]:
+    """Safe per-interruption fields for the durable ``turn.interrupted`` event (WP10)."""
+    summary = turn.interruption
+    if not summary.accepted:
+        return {}
+    evidence: dict[str, JsonValue] = {
+        "interruption_reason": summary.reason.value if summary.reason else None,
+        "interruption_phase": summary.phase.value if summary.phase else None,
+        "false_interruptions_suppressed": summary.false_interruption_suppressed_count,
+    }
+    if summary.interruption_latency_ms is not None:
+        evidence["interruption_latency_ms"] = summary.interruption_latency_ms
+    return evidence
 
 
 def _budget_evidence(budget: HistoryBudget) -> dict[str, JsonValue]:

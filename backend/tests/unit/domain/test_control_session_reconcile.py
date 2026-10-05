@@ -14,7 +14,12 @@ from voice_agent.domain.control_session import (
     TransportBinding,
 )
 from voice_agent.domain.errors import LifecycleStateError
-from voice_agent.domain.session_reconcile import ReconcileAction, reconcile_action
+from voice_agent.domain.session_reconcile import (
+    ReconcileAction,
+    RecoveryCapability,
+    reconcile_action,
+)
+from voice_agent.domain.worker_recovery import RecoveryAuthorization
 
 BINDING = TransportBinding(
     provider="livekit",
@@ -136,3 +141,86 @@ def test_terminal_sessions_are_left_alone() -> None:
     final = _ending(DisconnectReason.USER_ENDED).finalize_end(now=NOW)
 
     assert reconcile_action(final, NOW + timedelta(days=1)) is ReconcileAction.NONE
+
+
+# ------------------------------------------------- WP10 worker-crash recovery --
+CAPABLE = RecoveryCapability(instance_id="reconciler-a")
+
+
+def _crashed(**overrides: object) -> SessionRecord:
+    record = _connecting(worker_lease_expires_at=NOW, **overrides)
+    return record.model_copy(update={"status": SessionStatus.ACTIVE, "connect_deadline_at": None})
+
+
+def _recovering(owner: str = "reconciler-a", acquired_s: int = 0) -> SessionRecord:
+    acquired = NOW + timedelta(seconds=acquired_s)
+    authorization = RecoveryAuthorization(
+        owner_instance_id=owner,
+        acquired_at=acquired,
+        expires_at=acquired + timedelta(seconds=10),
+        recovery_deadline_at=NOW + timedelta(seconds=20),
+        writer_epoch=2,
+        recovery_dispatch_id="00000000-0000-4000-8000-0000000000d1",
+        owner_generation=1,
+    )
+    return _crashed().model_copy(
+        update={
+            "recovery_authorization": authorization,
+            "worker_recovery_count": 1,
+            "worker_lease_expires_at": None,
+        }
+    )
+
+
+def test_expired_lease_starts_one_recovery_only_when_capable() -> None:
+    crashed = _crashed()
+    later = NOW + timedelta(seconds=1)
+
+    assert reconcile_action(crashed, later, recovery=CAPABLE) is ReconcileAction.START_RECOVERY
+    assert reconcile_action(crashed, later) is ReconcileAction.FAIL_WORKER_LOST
+    second = crashed.model_copy(update={"worker_recovery_count": 1})
+    assert reconcile_action(second, later, recovery=CAPABLE) is ReconcileAction.FAIL_WORKER_LOST
+
+
+def test_recovery_is_continued_by_its_owner_and_taken_over_after_expiry() -> None:
+    recovering = _recovering()
+    other = RecoveryCapability(instance_id="reconciler-b")
+
+    assert (
+        reconcile_action(recovering, NOW + timedelta(seconds=5), recovery=CAPABLE)
+        is ReconcileAction.CONTINUE_RECOVERY
+    )
+    assert reconcile_action(recovering, NOW + timedelta(seconds=5), recovery=other) is (
+        ReconcileAction.NONE
+    )
+    assert (
+        reconcile_action(recovering, NOW + timedelta(seconds=11), recovery=other)
+        is ReconcileAction.TAKE_OVER_RECOVERY
+    )
+    assert reconcile_action(recovering, NOW + timedelta(seconds=5)) is ReconcileAction.NONE
+
+
+def test_any_instance_fails_a_recovery_past_its_deadline() -> None:
+    recovering = _recovering(owner="reconciler-b")
+    deadline = NOW + timedelta(seconds=20)
+
+    assert reconcile_action(recovering, deadline) is ReconcileAction.FAIL_RECOVERY_EXHAUSTED
+    assert (
+        reconcile_action(recovering, deadline, recovery=CAPABLE)
+        is ReconcileAction.FAIL_RECOVERY_EXHAUSTED
+    )
+
+
+def test_end_during_recovery_finalizes_instead() -> None:
+    recovering = _recovering()
+    ending = recovering.request_end(
+        client_request_id=END_ID,
+        reason=DisconnectReason.USER_ENDED,
+        requested_by=TerminationRequester.ANONYMOUS_USER,
+        now=NOW + timedelta(seconds=2),
+    ).record
+
+    assert (
+        reconcile_action(ending, NOW + timedelta(seconds=3), recovery=CAPABLE)
+        is ReconcileAction.FINALIZE_END
+    )

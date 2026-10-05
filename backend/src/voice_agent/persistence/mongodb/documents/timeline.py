@@ -248,7 +248,11 @@ def turn_document(
             false_interruption_suppressed_count=interruption.false_interruption_suppressed_count,
             phase=interruption.phase,
             reason=interruption.reason,
+            accepted_at=interruption.accepted_at,
+            playback_stopped_at=interruption.playback_stopped_at,
+            interruption_latency_ms=interruption.interruption_latency_ms,
         ),
+        latency_summary=_turn_latency(turn),
         created_at=created_at,
         updated_at=updated_at,
         content_policy_version=CONTENT_POLICY_VERSION,
@@ -280,8 +284,17 @@ def turn_from_document(doc: ConversationTurnDocument) -> ConversationTurn:
             false_interruption_suppressed_count=summary.false_interruption_suppressed_count,
             phase=summary.phase,
             reason=summary.reason,
+            accepted_at=summary.accepted_at,
+            playback_stopped_at=summary.playback_stopped_at,
+            interruption_latency_ms=summary.interruption_latency_ms,
         ),
     )
+
+
+def _turn_latency(turn: ConversationTurn) -> TurnLatencyDoc | None:
+    """Only measured values are written; nothing unavailable is stored as zero."""
+    latency = turn.interruption.interruption_latency_ms
+    return None if latency is None else TurnLatencyDoc(interruption_latency_ms=latency)
 
 
 # ------------------------------------------------------------- operations --

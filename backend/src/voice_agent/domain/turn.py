@@ -19,7 +19,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from voice_agent.contracts.base import CanonicalId, StrictModel
+from voice_agent.contracts.base import CanonicalId, StrictModel, UtcDatetime
 from voice_agent.contracts.enums import (
     FinishReason,
     InputDisposition,
@@ -74,12 +74,29 @@ _COMPLETION_STATUSES: frozenset[ResponseCompletionStatus] = frozenset(
 )
 
 
+class InterruptionTiming(StrictModel):
+    """Acceptance-to-silence evidence for one accepted interruption (docs/02 §7, WP10).
+
+    ``accepted_at`` is when the orchestrator accepted the barge-in;
+    ``playback_stopped_at`` is when ``AudioSource.clear_queue()`` returned
+    (server-side audible silence); ``interruption_latency_ms`` is the
+    monotonic difference between the two.
+    """
+
+    accepted_at: UtcDatetime
+    playback_stopped_at: UtcDatetime
+    interruption_latency_ms: Annotated[int, Field(ge=0)]
+
+
 class InterruptionSummary(StrictModel):
     detected_count: Annotated[int, Field(ge=0)] = 0
     accepted: bool = False
     false_interruption_suppressed_count: Annotated[int, Field(ge=0)] = 0
     phase: InterruptionPhase | None = None
     reason: InterruptionReason | None = None
+    accepted_at: UtcDatetime | None = None
+    playback_stopped_at: UtcDatetime | None = None
+    interruption_latency_ms: Annotated[int, Field(ge=0)] | None = None
 
 
 class ConversationTurn(StrictModel):
@@ -195,11 +212,16 @@ class ConversationTurn(StrictModel):
         return self._to(TurnStatus.COMPLETED, response_completion_status=completion)
 
     def interrupt(
-        self, *, reason: InterruptionReason, phase: InterruptionPhase | None
+        self,
+        *,
+        reason: InterruptionReason,
+        phase: InterruptionPhase | None,
+        timing: InterruptionTiming | None = None,
     ) -> ConversationTurn:
-        summary = self.interruption.model_copy(
-            update={"accepted": True, "reason": reason, "phase": phase}
-        )
+        update: dict[str, object] = {"accepted": True, "reason": reason, "phase": phase}
+        if timing is not None:
+            update.update(timing.model_dump())
+        summary = self.interruption.model_copy(update=update)
         return self._to(
             TurnStatus.INTERRUPTED,
             interruption=summary,

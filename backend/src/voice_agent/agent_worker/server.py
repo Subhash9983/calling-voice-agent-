@@ -1,12 +1,16 @@
 """Local LiveKit agent-worker process (docs/14 §21; docs/05 §2, §21).
 
-``python -m voice_agent.agent_worker [--media-mode tone|echo|stt|llm|tts]``
+``python -m voice_agent.agent_worker [--media-mode tone|echo|stt|llm|tts|conversation]``
 
 ``stt`` (WP7) runs local Silero VAD + the Turn Manager + Deepgram streaming
 STT, with no LLM or TTS, for sessions whose approved configuration has the
 Deepgram section; the Silero model is loaded once here, before registration.
 ``llm`` (WP8) adds one GPT-6 Luna generation per accepted turn, published as
 ``va.response.v1`` text (no TTS), for the approved OpenAI configuration.
+``tts`` (WP9) speaks every authorized segment with Sarvam Bulbul v3.
+``conversation`` (WP10) runs the same providers under the authoritative
+conversation orchestrator: natural barge-in, the deterministic greeting,
+clarification, and the approved session timeouts.
 
 Startup: validate bootstrap settings through the WP3 loader and the worker
 readiness check (MongoDB + LiveKit credentials, default configuration),

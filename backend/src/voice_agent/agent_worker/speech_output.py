@@ -133,6 +133,9 @@ class SpeechTurn:
         self._cancelled = False
         self._closed = False
         self.unspeakable_segments = 0
+        # Monotonic time ``clear_playback()`` (``AudioSource.clear_queue()``)
+        # returned after a cancel: server-side audible silence (WP10 evidence).
+        self.cleared_at_ms: int | None = None
 
     # ------------------------------------------------------------ intake --
     def start(self) -> None:
@@ -169,6 +172,11 @@ class SpeechTurn:
     @property
     def cancelled(self) -> bool:
         return self._cancelled
+
+    @property
+    def audible(self) -> bool:
+        """Some piece of this turn's audio reached playback."""
+        return any(track.playback_started for track in self.tracks)
 
     def _current(self) -> bool:
         return self._deps.fence.check(self._stamp) is FenceVerdict.ACCEPTED
@@ -304,6 +312,7 @@ class SpeechTurn:
             elif isinstance(item, FrameItem):
                 item.track.stale_frames += 1
         await self._deps.transport.clear_playback()
+        self.cleared_at_ms = self._deps.clock.monotonic_ms()
         playing, self._playing = self._playing, None
         if playing is not None and not playing.playback_completed:
             await self._deps.publisher.publish_playback(

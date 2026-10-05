@@ -18,9 +18,11 @@ from tests.support.fake_livekit_api import TEST_KEY, TEST_SECRET, FakeApi
 
 from voice_agent.contracts.dispatch import DispatchLocator, decode_dispatch_metadata
 from voice_agent.contracts.enums import DisconnectReason
+from voice_agent.contracts.events import EventEnvelope, EventType, EventVisibility
 from voice_agent.contracts.realtime_wire import CONTROL_TOPIC, EndRequestedSignal
 from voice_agent.ports.transport_control import (
     JOIN_TOKEN_LIFETIME_S,
+    RecoveryTransportControl,
     TransportAllocation,
     TransportControl,
     TransportControlError,
@@ -318,3 +320,75 @@ async def test_inspect_tolerates_a_room_deleted_between_calls() -> None:
     assert not status.room_exists
     fake.failures = {"get_dispatch": api.ServerError("not_found", "gone", status=404)}
     assert (await control.inspect_session(allocation)).dispatch_present is False
+
+
+# ------------------------------------------------- WP10 worker-crash recovery --
+RECOVERY_LOCATOR = LOCATOR.model_copy(
+    update={"recovery_dispatch_id": "00000000-0000-4000-8000-0000000000d1"}
+)
+ALLOCATION = TransportAllocation(
+    provider=LIVEKIT_PROVIDER,
+    room_name="va-rd-room",
+    participant_identity="va-user-1",
+    dispatch_id="AD_initial",
+    agent_identity="va-agent-1",
+)
+
+
+async def test_recovery_dispatch_is_created_once_per_recovery_id() -> None:
+    fake = FakeApi()
+    control = _control(fake)
+
+    first = await control.ensure_recovery_dispatch(
+        ALLOCATION, RECOVERY_LOCATOR, agent_name="voice-agent"
+    )
+    again = await control.ensure_recovery_dispatch(
+        ALLOCATION, RECOVERY_LOCATOR, agent_name="voice-agent"
+    )
+
+    assert isinstance(control, RecoveryTransportControl)
+    assert first == again
+    assert len(fake.dispatches) == 1
+    request = fake.dispatches[0]
+    assert (request.agent_name, request.room) == ("voice-agent", "va-rd-room")
+    decoded = decode_dispatch_metadata(request.metadata)
+    assert decoded.recovery_dispatch_id == RECOVERY_LOCATOR.recovery_dispatch_id
+
+
+async def test_recovery_dispatch_needs_a_recovery_locator_and_normalizes_failures() -> None:
+    fake = FakeApi({"list_dispatch": api.ServerError("unavailable", "down", status=503)})
+    control = _control(fake)
+
+    with pytest.raises(TransportControlError) as invalid:
+        await control.ensure_recovery_dispatch(ALLOCATION, LOCATOR, agent_name="voice-agent")
+    with pytest.raises(TransportControlError) as down:
+        await control.ensure_recovery_dispatch(
+            ALLOCATION, RECOVERY_LOCATOR, agent_name="voice-agent"
+        )
+
+    assert invalid.value.code == "invalid"
+    assert down.value.code == "transport_unavailable"
+
+
+async def test_recovering_notice_targets_the_browser_on_the_state_topic() -> None:
+    fake = FakeApi()
+    envelope = EventEnvelope(
+        event_id="00000000-0000-4000-8000-0000000000e1",
+        event_type=EventType.AGENT_RECOVERING,
+        occurred_at=NOW,
+        session_id=LOCATOR.session_id,
+        correlation_id="corr-1",
+        component="worker",
+        producer_service="control_api",
+        visibility=EventVisibility.BROWSER_SAFE,
+        payload={"state": "recovering"},
+    )
+
+    await _control(fake).notify_recovering(ALLOCATION, envelope)
+
+    [sent] = fake.sent
+    assert sent.topic == "va.state.v1"
+    assert list(sent.destination_identities) == ["va-user-1"]
+    body = json.loads(sent.data)
+    assert body["event_type"] == "agent.recovering"
+    assert body["payload"] == {"state": "recovering"}

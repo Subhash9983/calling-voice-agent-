@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Final, Protocol, runtime_checkable
+from typing import Any, Final, Protocol, runtime_checkable
 
 from pydantic import JsonValue
 
@@ -189,8 +189,14 @@ class SttCheck:
                 group.create_task(self._client_loop())
                 if self._stt_available:
                     group.create_task(self._stt_writer())
+                for work in self._extra_tasks():
+                    group.create_task(work)
         finally:
             await self._shutdown()
+
+    def _extra_tasks(self) -> list[Coroutine[Any, Any, None]]:
+        """Additional session tasks (the WP10 orchestrator adds its timers)."""
+        return []
 
     async def _start_stt(self) -> None:
         try:

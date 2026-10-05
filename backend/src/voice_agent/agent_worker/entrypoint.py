@@ -26,6 +26,7 @@ from voice_agent.agent_worker.admission import (
     RejectReason,
     admit_job,
 )
+from voice_agent.agent_worker.conversation_session import conversation_activity
 from voice_agent.agent_worker.llm_session import LlmSessionDeps, llm_activity, uses_real_llm
 from voice_agent.agent_worker.media_check import MediaMode
 from voice_agent.agent_worker.session_runner import (
@@ -63,7 +64,9 @@ ADMISSION_RETRY_INTERVAL_S: Final = 0.25
 TRANSIENT_REJECTIONS: Final = frozenset({RejectReason.NOT_CLAIMABLE, RejectReason.ROOM_MISMATCH})
 AGENT_DISPLAY_NAME: Final = "agent"
 # Modes that run local VAD + STT (and need the prewarmed Silero model).
-SPEECH_MODES: Final = frozenset({MediaMode.STT, MediaMode.LLM, MediaMode.TTS})
+SPEECH_MODES: Final = frozenset(
+    {MediaMode.STT, MediaMode.LLM, MediaMode.TTS, MediaMode.CONVERSATION}
+)
 _LOGGER = logging.getLogger("voice_agent.agent_worker")
 
 
@@ -255,7 +258,7 @@ def session_activity(
     persistence: MongoPersistence,
     stores: WorkerStores,
 ) -> ActivityFactory | None:
-    """The STT/LLM/TTS check for a matching configuration, else ``None`` (test tone)."""
+    """The STT/LLM/TTS check or the WP10 conversation, else ``None`` (test tone)."""
     if config.media_mode not in SPEECH_MODES:
         return None
     if not uses_real_stt(admission.config) or config.silero is None:
@@ -279,7 +282,10 @@ def session_activity(
     if not uses_real_tts(admission.config):
         _LOGGER.warning("worker.tts_mode_without_tts_configuration")
         return None
-    return tts_activity(admission, TtsSessionDeps(llm=LlmSessionDeps(stt=deps)))
+    speech = TtsSessionDeps(llm=LlmSessionDeps(stt=deps))
+    if config.media_mode is MediaMode.CONVERSATION:
+        return conversation_activity(admission, speech)
+    return tts_activity(admission, speech)
 
 
 async def run_job(

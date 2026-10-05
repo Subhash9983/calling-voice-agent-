@@ -44,6 +44,8 @@ from voice_agent.persistence.mongodb.repositories.timeline import (
 )
 from voice_agent.ports.clock import Clock, IdGenerator
 from voice_agent.ports.control_plane import SessionEventLog
+from voice_agent.ports.speech_activity import SpeechActivityPort
+from voice_agent.ports.stt import STTPort
 from voice_agent.security.credentials import CredentialResolver
 from voice_agent.security.settings import BootstrapSettings
 from voice_agent.speech_activity.silero import SileroModelHandle, SileroSpeechActivityDetector
@@ -145,14 +147,18 @@ def _evidence(deps: SttSessionDeps, admission: JobAdmission, generation: int) ->
 GateFactory = Callable[[SttEvidence, RealtimePublisher], GenerationGate]
 
 
-def build_stt_check(
-    context: ActivityContext,
-    admission: JobAdmission,
-    deps: SttSessionDeps,
-    *,
-    gate_factory: GateFactory | None = None,
-) -> SttCheck:
-    """The STT check; ``gate_factory`` adds a generation gate sharing its evidence/publisher."""
+@dataclass(frozen=True, slots=True)
+class SttParts:
+    """The STT pipeline pieces shared by the STT check and the WP10 orchestrator."""
+
+    setup: SttCheckSetup
+    stt: STTPort
+    detector: SpeechActivityPort
+    evidence: SttEvidence
+    publisher: RealtimePublisher
+
+
+def stt_parts(context: ActivityContext, admission: JobAdmission, deps: SttSessionDeps) -> SttParts:
     config = admission.config
     credential_ref = config.stt.credential_ref
     if credential_ref is None:  # pragma: no cover - rejected by the approved profile
@@ -170,7 +176,6 @@ def build_stt_check(
         retry=config.retry_policy,
         retry_delay_ms=jittered_backoff(config.retry_policy),
     )
-    evidence = _evidence(deps, admission, context.worker_generation)
     publisher = RealtimePublisher(
         context.transport,
         session_id=context.session_id,
@@ -178,9 +183,8 @@ def build_stt_check(
         clock=deps.clock,
         ids=deps.ids,
     )
-    return SttCheck(
-        context.transport,
-        SttCheckSetup(
+    return SttParts(
+        setup=SttCheckSetup(
             session_id=context.session_id,
             worker_generation=context.worker_generation,
             policy=policy,
@@ -189,11 +193,30 @@ def build_stt_check(
         ),
         stt=stt,
         detector=SileroSpeechActivityDetector(deps.silero.new_model(), policy),
-        evidence=evidence,
+        evidence=_evidence(deps, admission, context.worker_generation),
         publisher=publisher,
+    )
+
+
+def build_stt_check(
+    context: ActivityContext,
+    admission: JobAdmission,
+    deps: SttSessionDeps,
+    *,
+    gate_factory: GateFactory | None = None,
+) -> SttCheck:
+    """The STT check; ``gate_factory`` adds a generation gate sharing its evidence/publisher."""
+    parts = stt_parts(context, admission, deps)
+    return SttCheck(
+        context.transport,
+        parts.setup,
+        stt=parts.stt,
+        detector=parts.detector,
+        evidence=parts.evidence,
+        publisher=parts.publisher,
         clock=deps.clock,
         ids=deps.ids,
-        gate=None if gate_factory is None else gate_factory(evidence, publisher),
+        gate=None if gate_factory is None else gate_factory(parts.evidence, parts.publisher),
     )
 
 

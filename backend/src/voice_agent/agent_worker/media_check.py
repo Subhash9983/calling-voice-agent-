@@ -69,6 +69,9 @@ class MediaMode(StrEnum):
     # WP9: the LLM check with every authorized segment spoken by Sarvam
     # Bulbul v3 through the agent-audio source (full voice pipeline).
     TTS = "tts"
+    # WP10: the same providers run by the authoritative conversation
+    # orchestrator (barge-in, greeting, clarification, session timeouts).
+    CONVERSATION = "conversation"
 
 
 @dataclass(frozen=True, slots=True)

@@ -89,3 +89,50 @@ def test_confinement_scan_is_non_vacuous() -> None:
 
     assert users >= CONTROL_PLANE_SDK_ALLOWED
     assert "transport_adapters/livekit/rtc_binding.py" in users
+
+
+# WP10 (docs/05 §11, docs/14 §16): the application owns turn-taking. LiveKit's
+# voice pipeline (``AgentSession``/``Agent``) and its semantic/audio Turn
+# Detector are never used; the worker uses ``livekit.agents`` only for the
+# job server and job context.
+FORBIDDEN_LIVEKIT_MODULE_PREFIXES = ("livekit.agents.voice", "livekit.plugins.turn_detector")
+FORBIDDEN_LIVEKIT_NAMES = frozenset(
+    {"AgentSession", "Agent", "AgentTask", "MultilingualModel", "EnglishModel", "TurnDetector"}
+)
+
+
+def _turn_taking_violations(source: str) -> list[str]:
+    found = [
+        name for name in _full_names(source) if name.startswith(FORBIDDEN_LIVEKIT_MODULE_PREFIXES)
+    ]
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("livekit"):
+            found.extend(a.name for a in node.names if a.name in FORBIDDEN_LIVEKIT_NAMES)
+        elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_LIVEKIT_NAMES:
+            found.append(node.attr)
+    return found
+
+
+@pytest.mark.parametrize("path", _modules(), ids=_relative)
+def test_no_livekit_agent_session_or_turn_detector(path: Path) -> None:
+    assert _turn_taking_violations(path.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from livekit.agents import AgentSession",
+        "from livekit.agents.voice import Agent",
+        "from livekit.plugins.turn_detector.multilingual import MultilingualModel",
+        "from livekit import agents\nsession = agents.AgentSession()",
+        "import livekit.plugins.turn_detector",
+    ],
+)
+def test_turn_taking_scanner_detects_the_livekit_voice_pipeline(source: str) -> None:
+    assert _turn_taking_violations(source)
+
+
+def test_turn_taking_scanner_allows_the_job_server() -> None:
+    source = "from livekit import agents\nserver = agents.AgentServer()\nagents.JobContext"
+
+    assert _turn_taking_violations(source) == []

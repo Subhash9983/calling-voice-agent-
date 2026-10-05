@@ -39,6 +39,7 @@ from voice_agent.domain.records_common import (
     Revision,
 )
 from voice_agent.domain.session import TERMINAL_SESSION_STATES
+from voice_agent.domain.worker_recovery import RecoveryAuthorization
 from voice_agent.privacy_and_retention.expiry import (
     PRIVACY_POLICY_VERSION,
     RETENTION_POLICY_VERSION,
@@ -354,7 +355,8 @@ def mutable_fields(record: SessionRecord) -> tuple[dict[str, Any], list[str]]:
     to_set: dict[str, Any] = {key: dumped[key] for key in MUTABLE_RECORD_FIELDS if key in dumped}
     to_unset = [key for key in MUTABLE_RECORD_FIELDS if key not in dumped]
     if record.is_terminal:
-        to_unset.append("idle_deadline_at")
+        # Finalization ends any recovery in progress (docs/05 §21).
+        to_unset.extend(("idle_deadline_at", "recovery_authorization"))
     return to_set, to_unset
 
 
@@ -434,6 +436,12 @@ def record_from_document(doc: VoiceSessionDocument) -> SessionRecord:
         connect_deadline_at=doc.connect_deadline_at,
         termination_deadline_at=doc.termination_deadline_at,
         worker_lease_expires_at=lease_expiry_of(doc),
+        recovery_authorization=(
+            None
+            if doc.recovery_authorization is None
+            else RecoveryAuthorization.model_validate(doc.recovery_authorization.model_dump())
+        ),
+        worker_recovery_count=doc.worker_recovery_count,
     )
 
 
