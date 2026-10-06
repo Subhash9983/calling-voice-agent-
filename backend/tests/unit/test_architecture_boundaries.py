@@ -251,3 +251,28 @@ def test_sdk_placement_scan_is_non_vacuous() -> None:
         encoding="utf-8"
     )
     assert _uses(sarvam_binding, "sarvamai", "voice_agent.tts_adapters.sarvam")
+
+
+# WP12: the evaluation runner/scoring core is provider-independent (docs/03 §24,
+# docs/14 §18). Executors receive adapters by injection; the core reaches only
+# domain/contracts/ports and the provider-neutral application packages.
+EVALUATION_FORBIDDEN_INTERNAL: frozenset[str] = ORCHESTRATION_FORBIDDEN_INTERNAL
+
+
+@pytest.mark.parametrize(
+    "path", _modules_of(("evaluation",)), ids=lambda p: p.relative_to(PACKAGE_ROOT).as_posix()
+)
+def test_evaluation_core_is_provider_independent(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    reached = [
+        name
+        for name in _imported_modules(source, _package_of(path))
+        if name.split(".")[0] in FORBIDDEN_EXTERNAL_ROOTS
+        or (name.startswith("voice_agent.") and name.split(".")[1] in EVALUATION_FORBIDDEN_INTERNAL)
+    ]
+
+    assert reached == []
+
+
+def test_evaluation_scan_is_non_vacuous() -> None:
+    assert len(_modules_of(("evaluation",))) > 10

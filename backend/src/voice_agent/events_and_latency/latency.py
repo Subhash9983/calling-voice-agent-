@@ -11,8 +11,13 @@ never zero):
   failed earlier attempt is not the user-perceived latency);
 - ``tts_first_audio``: the turn's earliest-started TTS attempt with a known
   ``time_to_first_result_ms``;
-- ``first_audible_response``: first ``playback.started`` minus
-  ``user.speech_ended`` of the same turn (end of user speech -> agent audio);
+- ``first_audible_response``: the *composed* docs/11 §11 sample (see
+  :mod:`voice_agent.events_and_latency.first_audible`): worker monotonic span
+  (last VAD speech frame -> first TTS frame written) + browser playout span
+  + RTT/2 network estimate. Only composed samples (measured or documented
+  fallback network estimate) count; a turn without a browser span has a
+  ``worker_only`` diagnostic sample in :attr:`TurnLatency.first_audible`
+  but no ``first_audible_response`` sample;
 - ``complete_turn``: ``turn.completed`` minus ``user.speech_ended`` of the
   same turn (completed turns only; interrupted turns are truncated);
 - ``interruption``: the stored WP10 ``interruption_latency_ms``.
@@ -32,6 +37,12 @@ from voice_agent.contracts.enums import OperationComponent
 from voice_agent.contracts.events import EventEnvelope, EventType
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
+from voice_agent.events_and_latency.first_audible import (
+    FirstAudibleMethod,
+    FirstAudibleSample,
+    MeasuredFirstAudible,
+    first_audible_sample,
+)
 from voice_agent.events_and_latency.interruption import nearest_rank
 
 STT_FINALIZATION: Final = "stt_finalization"
@@ -89,6 +100,8 @@ def latency_stats(values: Sequence[int]) -> LatencyStats | None:
 class TurnLatency:
     turn_id: str
     samples: Mapping[str, int]
+    # The structured speech-end -> first-audible sample (including worker-only).
+    first_audible: FirstAudibleSample | None = None
 
 
 def _first(events: Iterable[EventEnvelope], event_type: EventType) -> EventEnvelope | None:
@@ -142,7 +155,7 @@ def turn_latency(
     ordered = _ordered(events)
     speech_end = _first(ordered, EventType.USER_SPEECH_ENDED)
     end_at = None if speech_end is None else speech_end.occurred_at
-    playback = _first(ordered, EventType.PLAYBACK_STARTED)
+    first_audible = first_audible_sample(turn.turn_id, ordered)
     completed = _first(ordered, EventType.TURN_COMPLETED)
     candidates = {
         STT_FINALIZATION: _payload_ms(
@@ -150,14 +163,18 @@ def turn_latency(
         ),
         LLM_FIRST_TOKEN: _llm_first_token(operations),
         TTS_FIRST_AUDIO: _tts_first_audio(operations),
-        FIRST_AUDIBLE_RESPONSE: _between(
-            end_at, None if playback is None else playback.occurred_at
+        FIRST_AUDIBLE_RESPONSE: (
+            first_audible.total_ms
+            if first_audible is not None and first_audible.is_composed
+            else None
         ),
         COMPLETE_TURN: _between(end_at, None if completed is None else completed.occurred_at),
         INTERRUPTION: turn.interruption.interruption_latency_ms,
     }
     return TurnLatency(
-        turn.turn_id, {name: value for name, value in candidates.items() if value is not None}
+        turn.turn_id,
+        {name: value for name, value in candidates.items() if value is not None},
+        first_audible,
     )
 
 
@@ -174,3 +191,36 @@ def latency_from_samples(samples: Mapping[str, Sequence[int]]) -> dict[str, Late
     """Statistics per metric in the canonical order; empty metrics are omitted."""
     summary = {name: latency_stats(list(samples.get(name, ()))) for name in LATENCY_METRICS}
     return {name: stats for name, stats in summary.items() if stats is not None}
+
+
+def _stats_dict(values: Sequence[int]) -> dict[str, int | float] | None:
+    stats = latency_stats(values)
+    return None if stats is None else stats.to_dict()
+
+
+def first_audible_breakdown(samples: Iterable[MeasuredFirstAudible]) -> dict[str, object]:
+    """Speech-end -> first-audible statistics split by measurement method.
+
+    ``composed_all`` is the docs/11 §11 value (gate evidence); worker-only
+    samples are reported separately as a diagnostic lower bound and never
+    mixed into the composed percentiles.
+    """
+    pooled = list(samples)
+    by_method = {
+        method: [s.total_ms for s in pooled if s.method is method] for method in FirstAudibleMethod
+    }
+    composed = [s for s in pooled if s.method is not FirstAudibleMethod.WORKER_ONLY]
+    uncertainties = [
+        s.network_uncertainty_ms for s in composed if s.network_uncertainty_ms is not None
+    ]
+    return {
+        "sample_counts": {method.value: len(values) for method, values in by_method.items()},
+        "composed_all": _stats_dict([s.total_ms for s in composed]),
+        "composed_measured_network": _stats_dict(by_method[FirstAudibleMethod.COMPOSED]),
+        "composed_assumed_network": _stats_dict(
+            by_method[FirstAudibleMethod.COMPOSED_NETWORK_ASSUMED]
+        ),
+        "worker_only_diagnostic": _stats_dict(by_method[FirstAudibleMethod.WORKER_ONLY]),
+        "max_network_uncertainty_ms": max(uncertainties, default=None),
+        "meets_composed_method": bool(pooled) and len(composed) == len(pooled),
+    }

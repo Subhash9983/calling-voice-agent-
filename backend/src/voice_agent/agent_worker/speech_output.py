@@ -52,6 +52,7 @@ from voice_agent.contracts.events import EventType
 from voice_agent.contracts.failures import NormalizedFailure
 from voice_agent.contracts.identity import GenerationStamp, PlaybackAckIdentity
 from voice_agent.contracts.transport import PlaybackAck, PlaybackAckKind, PlaybackFrame
+from voice_agent.events_and_latency.first_audible import FIRST_FRAME_AT_KEY
 from voice_agent.orchestration.generations import FenceVerdict, GenerationFence
 from voice_agent.orchestration.response_generation import DeliveredSegment
 from voice_agent.ports.clock import Clock, IdGenerator
@@ -127,6 +128,9 @@ class SpeechTurn:
         self._tasks: list[asyncio.Task[None]] = []
         self._started_ms = deps.clock.monotonic_ms()
         self._first_audio_ms: int | None = None
+        # Worker monotonic time the turn's first frame was written to the
+        # AudioSource: the end of the docs/11 §11 worker span.
+        self._first_frame_at_ms: int | None = None
         self._failure: NormalizedFailure | None = None
         self._playing: SegmentTrack | None = None
         self._audible: set[int] = set()
@@ -214,10 +218,22 @@ class SpeechTurn:
 
     async def _play(self, item: FrameItem) -> None:
         track = item.track
-        if not track.playback_started:
+        starting = not track.playback_started
+        if starting:
             await self._start_playback(track)
         frame = PlaybackFrame(identity=track.identity, turn_id=self._turn_id, frame=item.frame)
         await self._deps.transport.publish_audio(frame)
+        if starting:
+            self._record_started(track)
+
+    def _record_started(self, track: SegmentTrack) -> None:
+        written_at = self._deps.clock.monotonic_ms()
+        first = self._first_frame_at_ms is None
+        if first:
+            self._first_frame_at_ms = written_at
+        self._record(
+            EventType.PLAYBACK_STARTED, track, first_frame_at_ms=written_at if first else None
+        )
 
     async def _start_playback(self, track: SegmentTrack) -> None:
         track.playback_started = True
@@ -232,7 +248,6 @@ class SpeechTurn:
             self._audible.add(id(track.segment))
             segment = track.segment
             self._side.submit(lambda: self._on_audible(segment))
-        self._record(EventType.PLAYBACK_STARTED, track)
 
     async def _end(self, track: SegmentTrack) -> None:
         transport = self._deps.transport
@@ -248,13 +263,17 @@ class SpeechTurn:
         )
         self._record(EventType.PLAYBACK_COMPLETED, track)
 
-    def _record(self, event_type: EventType, track: SegmentTrack) -> None:
+    def _record(
+        self, event_type: EventType, track: SegmentTrack, *, first_frame_at_ms: int | None = None
+    ) -> None:
         payload: dict[str, JsonValue] = {
             "segment_sequence": track.segment.sequence,
             "piece_index": track.index,
         }
         if event_type is EventType.PLAYBACK_STARTED and track.index == 0:
             payload["response_to_first_audio_ms"] = self._first_audio_ms or 0
+        if first_frame_at_ms is not None:
+            payload[FIRST_FRAME_AT_KEY] = first_frame_at_ms
         evidence, turn_id = self._deps.evidence, self._turn_id
         at = self._deps.clock.utc_now()  # when playback happened, not when the write ran
         self._writer.submit(

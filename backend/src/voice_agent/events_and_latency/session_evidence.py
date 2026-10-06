@@ -29,7 +29,11 @@ from voice_agent.events_and_latency.evidence_types import (
     SessionEvidenceInput,
     TimelineEntry,
 )
-from voice_agent.events_and_latency.latency import latency_from_samples, turn_latency
+from voice_agent.events_and_latency.latency import (
+    TurnLatency,
+    latency_from_samples,
+    turn_latency,
+)
 from voice_agent.ports.control_plane import EventRecord
 from voice_agent.privacy_and_retention.expiry import session_expires_at
 
@@ -122,8 +126,8 @@ def finalization_evidence(data: SessionEvidenceInput) -> FinalizationEvidence:
     )
 
 
-def session_latency_samples(data: SessionEvidenceInput) -> dict[str, tuple[int, ...]]:
-    """Per-metric samples, one per turn (metrics without samples omitted)."""
+def session_turn_latencies(data: SessionEvidenceInput) -> tuple[TurnLatency, ...]:
+    """Each turn's latency from its own events and attempts (session turn order)."""
     events: dict[str, list[EventRecord]] = {}
     for record in data.events:
         if record.envelope.turn_id is not None:
@@ -132,16 +136,27 @@ def session_latency_samples(data: SessionEvidenceInput) -> dict[str, tuple[int, 
     for operation in data.operations:
         if operation.turn_id is not None:
             attempts.setdefault(operation.turn_id, []).append(operation)
-    collected: dict[str, list[int]] = {}
-    for turn in data.turns:
-        latency = turn_latency(
+    return tuple(
+        turn_latency(
             turn,
             [r.envelope for r in events.get(turn.turn_id, [])],
             attempts.get(turn.turn_id, []),
         )
+        for turn in data.turns
+    )
+
+
+def _pooled(latencies: Sequence[TurnLatency]) -> dict[str, tuple[int, ...]]:
+    collected: dict[str, list[int]] = {}
+    for latency in latencies:
         for name, value in latency.samples.items():
             collected.setdefault(name, []).append(value)
     return {name: tuple(values) for name, values in collected.items()}
+
+
+def session_latency_samples(data: SessionEvidenceInput) -> dict[str, tuple[int, ...]]:
+    """Per-metric samples, one per turn (metrics without samples omitted)."""
+    return _pooled(session_turn_latencies(data))
 
 
 def build_session_evidence(data: SessionEvidenceInput, *, card: RateCard | None) -> SessionEvidence:
@@ -149,7 +164,8 @@ def build_session_evidence(data: SessionEvidenceInput, *, card: RateCard | None)
     usage, unavailable = usage_summary(data.operations)
     cost = reconcile(data.session.session_id, data.cost_entries, data.operations, card=card)
     finalization = finalization_evidence(data)
-    samples = session_latency_samples(data)
+    latencies = session_turn_latencies(data)
+    samples = _pooled(latencies)
     return SessionEvidence(
         session_id=data.session.session_id,
         status=data.session.status.value,
@@ -160,6 +176,9 @@ def build_session_evidence(data: SessionEvidenceInput, *, card: RateCard | None)
         error_summary=error_summary(data.errors, data.operations),
         latency=latency_from_samples(samples),
         latency_samples=samples,
+        first_audible_samples=tuple(
+            latency.first_audible for latency in latencies if latency.first_audible is not None
+        ),
         usage=usage,
         usage_unavailable_operation_ids=unavailable,
         cost=cost,

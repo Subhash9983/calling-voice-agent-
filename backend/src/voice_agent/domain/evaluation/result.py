@@ -139,6 +139,11 @@ class AssertionResult(RecordModel):
     evaluated_at: UtcDatetime
 
 
+# How ``speech_end_to_playback_ms`` was measured (docs/11 §11): composed with a
+# measured or a documented fallback network estimate, or worker-only (diagnostic).
+SpeechEndMethod = Literal["composed", "composed_network_assumed", "worker_only"]
+
+
 class ResultMeasurements(RecordModel):
     metric_schema_version: ShortLabel
     language_correct: bool | None = None
@@ -150,6 +155,9 @@ class ResultMeasurements(RecordModel):
     end_to_end_success: bool | None = None
     lifecycle_correct: bool | None = None
     speech_end_to_playback_ms: Ms | None = None
+    speech_end_to_playback_method: SpeechEndMethod | None = None
+    speech_end_network_uncertainty_ms: Ms | None = None
+    speech_end_to_worker_audio_ms: Ms | None = None
     stt_final_ms: Ms | None = None
     llm_first_token_ms: Ms | None = None
     llm_completion_ms: Ms | None = None

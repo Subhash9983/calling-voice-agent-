@@ -79,6 +79,11 @@ def _default_factory(environ: Mapping[str, str] | None) -> MongoPersistence:
     return MongoPersistence(settings.mongodb_uri, database_name=settings.mongodb_database)
 
 
+def default_persistence_factory(environ: Mapping[str, str] | None) -> MongoPersistence:
+    """The WP3-loaded R&D persistence (shared by the maintenance CLIs)."""
+    return _default_factory(environ)
+
+
 async def _verify(
     persistence: MongoPersistence, _args: argparse.Namespace, _env: str
 ) -> dict[str, Any]:

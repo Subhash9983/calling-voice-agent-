@@ -284,6 +284,7 @@ export type ClientEventType =
   | "client.ready"
   | "client.mic_muted"
   | "client.mic_unmuted"
+  | "client.latency_sample"
   | "playback.started"
   | "playback.progress"
   | "playback.completed"
@@ -301,6 +302,8 @@ export interface ClientEventInput {
   readonly sessionId: string;
   readonly eventId: string;
   readonly occurredAt: string;
+  /** Required by the backend for `client.latency_sample`; optional elsewhere (docs/01 §8). */
+  readonly turnId?: string;
   readonly payload?: Readonly<Record<string, string | number | boolean>>;
 }
 
@@ -317,6 +320,7 @@ export function encodeClientEvent(input: ClientEventInput): EncodedClientEvent {
     schema_version: SCHEMA_VERSION,
     event_id: input.eventId,
     session_id: input.sessionId,
+    ...(input.turnId === undefined ? {} : { turn_id: input.turnId }),
     event_type: input.eventType,
     occurred_at: input.occurredAt,
     payload: input.payload ?? {},

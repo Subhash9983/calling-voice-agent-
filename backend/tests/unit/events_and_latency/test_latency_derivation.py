@@ -17,6 +17,11 @@ from voice_agent.contracts.enums import (
 from voice_agent.contracts.events import EventEnvelope, EventType
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn, InterruptionTiming
+from voice_agent.events_and_latency.first_audible import (
+    FIRST_FRAME_AT_KEY,
+    FirstAudibleMethod,
+    latency_sample_payload,
+)
 from voice_agent.events_and_latency.latency import (
     COMPLETE_TURN,
     FIRST_AUDIBLE_RESPONSE,
@@ -74,10 +79,11 @@ def _turn() -> ConversationTurn:
 
 def test_every_metric_comes_from_stored_evidence() -> None:
     events = [
-        _event(EventType.USER_SPEECH_ENDED, 0),
+        _event(EventType.USER_SPEECH_ENDED, 0, last_speech_at_ms=50_000),
         _event(EventType.STT_TURN_FINALIZED, 180, endpoint_to_final_ms=180),
-        _event(EventType.PLAYBACK_STARTED, 1200),
-        _event(EventType.PLAYBACK_STARTED, 1900),
+        _event(EventType.PLAYBACK_STARTED, 1200, **{FIRST_FRAME_AT_KEY: 51_900}),
+        _event(EventType.PLAYBACK_STARTED, 1900, **{FIRST_FRAME_AT_KEY: 52_600}),
+        _event(EventType.TRANSPORT_QUALITY_UPDATED, 2000, **latency_sample_payload(80, 25)),
         _event(EventType.TURN_COMPLETED, 2600),
     ]
     operations = [
@@ -93,9 +99,27 @@ def test_every_metric_comes_from_stored_evidence() -> None:
         STT_FINALIZATION: 180,
         LLM_FIRST_TOKEN: 420,  # the attempt that answered, not the failed one
         TTS_FIRST_AUDIO: 300,  # the turn's first segment
-        FIRST_AUDIBLE_RESPONSE: 1200,
+        # Composed: 1,900 worker monotonic span + 80 browser playout + 25 RTT/2.
+        FIRST_AUDIBLE_RESPONSE: 2005,
         COMPLETE_TURN: 2600,
     }
+
+
+def test_first_audible_is_never_a_wall_clock_difference() -> None:
+    events = [
+        _event(EventType.USER_SPEECH_ENDED, 0, last_speech_at_ms=50_000),
+        _event(EventType.PLAYBACK_STARTED, 1200, **{FIRST_FRAME_AT_KEY: 51_900}),
+    ]
+
+    latency = turn_latency(_turn(), events, [])
+
+    # Worker-only: kept as a structured diagnostic, not as the end-to-end metric.
+    assert FIRST_AUDIBLE_RESPONSE not in latency.samples
+    assert latency.first_audible is not None
+    assert latency.first_audible.method is FirstAudibleMethod.WORKER_ONLY
+    assert latency.first_audible.worker_span_ms == 1900
+    legacy = [_event(EventType.USER_SPEECH_ENDED, 0), _event(EventType.PLAYBACK_STARTED, 1200)]
+    assert turn_latency(_turn(), legacy, []).first_audible is None
 
 
 def test_missing_or_invalid_evidence_gives_no_sample_never_zero() -> None:

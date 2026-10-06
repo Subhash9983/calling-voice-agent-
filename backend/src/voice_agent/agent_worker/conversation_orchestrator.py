@@ -44,6 +44,7 @@ from pydantic import JsonValue
 
 from voice_agent.agent_worker.conversation_gate import InterruptRequest, OrchestratedGate
 from voice_agent.agent_worker.conversation_policy import ConversationTimeouts
+from voice_agent.agent_worker.latency_samples import LatencySampleRecorder
 from voice_agent.agent_worker.llm_gate import interruption_evidence
 from voice_agent.agent_worker.ordered_writer import OrderedWriter
 from voice_agent.agent_worker.realtime_publisher import RealtimePublisher, sanitize_transcript
@@ -61,6 +62,7 @@ from voice_agent.contracts.events import EventType
 from voice_agent.contracts.speech import SpeechActivityEvent, SpeechActivityKind
 from voice_agent.contracts.stt import SttTurnFinalized
 from voice_agent.contracts.transport import (
+    ClientLatencySample,
     ClientReady,
     PlaybackAck,
     TransportEvent,
@@ -131,6 +133,7 @@ class ConversationOrchestrator(SttCheck):
         self._greeting_enabled = greeting_enabled
         self._greeting_attempted = False
         self._writer = OrderedWriter()
+        self._latency = LatencySampleRecorder(evidence, self._writer, clock, self._count)
         self._side: set[asyncio.Task[None]] = set()
         self._paused = False
         self._blocked = False
@@ -277,6 +280,8 @@ class ConversationOrchestrator(SttCheck):
         await self._open_turn(decision.speech_started_at_ms)
         self._open_mono_ms = self._clock.monotonic_ms()
         opened = self._open
+        if opened is not None:
+            self._latency.track(opened.turn.turn_id)
         if self._pending_barge and opened is not None:
             self._after_barge.add(opened.turn.turn_id)
             for source in self._barge_sources:
@@ -369,6 +374,8 @@ class ConversationOrchestrator(SttCheck):
                 await self._on_client_ready()
             elif isinstance(event, PlaybackAck):
                 await self._speaking.on_playback_ack(event)
+            elif isinstance(event, ClientLatencySample):
+                self._latency.record(event)
 
     async def _on_client_ready(self) -> None:
         if self._publisher.state is not None:

@@ -18,7 +18,7 @@ from voice_agent.costing.calculator import round_for_report
 from voice_agent.costing.rate_card import rate_card_by_id
 from voice_agent.costing.reconciliation import CostReconciliation
 from voice_agent.events_and_latency.evidence_types import SessionEvidence
-from voice_agent.events_and_latency.latency import latency_from_samples
+from voice_agent.events_and_latency.latency import first_audible_breakdown, latency_from_samples
 
 MAX_REPORTED_ISSUES: Final = 20
 JsonDict = dict[str, Any]
@@ -85,6 +85,7 @@ def session_dict(evidence: SessionEvidence, *, include_timeline: bool = False) -
             "by_type": dict(sorted(errors.by_type.items())),
         },
         "latency_ms": {name: stats.to_dict() for name, stats in evidence.latency.items()},
+        "first_audible_response": first_audible_breakdown(evidence.first_audible_samples),
         "usage": {
             component: {unit: _text(quantity) for unit, quantity in sorted(units.items())}
             for component, units in sorted(evidence.usage.items())
@@ -148,6 +149,9 @@ def aggregate_dict(sessions: Sequence[SessionEvidence]) -> JsonDict:
         "coherent_sessions": sum(1 for s in sessions if s.coherent),
         "issue_codes": _issue_codes(sessions),
         "latency_ms": _pooled_latency(sessions),
+        "first_audible_response": first_audible_breakdown(
+            sample for evidence in sessions for sample in evidence.first_audible_samples
+        ),
         "cost": {
             "priced_sessions": len(known),
             "unpriced_sessions": len(sessions) - len(known),

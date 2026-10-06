@@ -42,6 +42,11 @@ def _sources(persistence: MongoPersistence) -> EvidenceSources:
     )
 
 
+def evidence_sources(persistence: MongoPersistence) -> EvidenceSources:
+    """The read ports the control API and reports use (shared with the evaluation CLI)."""
+    return _sources(persistence)
+
+
 async def _session_ids(
     sources: EvidenceSources, environment: str, *, limit: int, session_id: str | None
 ) -> list[str]:

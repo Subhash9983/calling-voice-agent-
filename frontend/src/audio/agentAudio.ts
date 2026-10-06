@@ -162,6 +162,19 @@ export class AgentAudioPlayer {
     }
   }
 
+  /** Read-only receiver stats for the attached track, or undefined if nothing is attached. */
+  public async getStatsReport(): Promise<RTCStatsReport | undefined> {
+    const track = this.track;
+    if (track === null) {
+      return undefined;
+    }
+    try {
+      return await track.getRTCStatsReport();
+    } catch {
+      return undefined;
+    }
+  }
+
   private publish(next: AgentAudioStatus): void {
     this.status = next;
     this.options.onStatus(next);

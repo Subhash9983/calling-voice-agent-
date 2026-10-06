@@ -156,6 +156,11 @@ export class LiveKitTransport {
     this.player.setPlaybackBlocked(!this.room.canPlaybackAudio);
   }
 
+  /** Read-only agent-audio receiver stats, for the composed response-latency sample (docs/06 §15). */
+  public async getAgentAudioStats(): Promise<RTCStatsReport | undefined> {
+    return this.player.getStatsReport();
+  }
+
   public async sendClientEvent(input: ClientEventInput): Promise<ClientEventOutcome> {
     if (this.state !== "connected") {
       return "not_connected";

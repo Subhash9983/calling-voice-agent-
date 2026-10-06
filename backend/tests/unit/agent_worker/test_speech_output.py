@@ -9,6 +9,7 @@ fence advanced, and ``clear_queue()`` must run.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -20,12 +21,14 @@ from voice_agent.agent_worker.speech_output import SpeechDeps, SpeechTurn
 from voice_agent.agent_worker.speech_synthesis import SpeechSetup
 from voice_agent.agent_worker.stt_evidence import EvidenceContext, SttEvidence
 from voice_agent.contracts.enums import TtsLanguageCode
+from voice_agent.contracts.events import EventType
 from voice_agent.contracts.policies import RetryPolicy
 from voice_agent.contracts.tts import MAX_TTS_SEGMENT_CHARS, TtsVoiceConfig
 from voice_agent.costing.rate_card import phase0_rate_card
 from voice_agent.domain.agent_config import AgentConfigEnvironment
 from voice_agent.domain.cost_entry import CostEntryRecord
 from voice_agent.events_and_latency.clock import ManualClock, SystemClock, UuidIdGenerator
+from voice_agent.events_and_latency.first_audible import FIRST_FRAME_AT_KEY
 from voice_agent.orchestration.generations import GenerationFence
 from voice_agent.orchestration.response_generation import DeliveredSegment
 from voice_agent.persistence.in_memory import InMemoryOperationRepository, InMemoryTurnRepository
@@ -62,6 +65,7 @@ class Rig:
     fence: GenerationFence
     gateway: FakeGateway
     tts: MockTtsAdapter
+    sink: Sink = field(default_factory=Sink)
 
     def playback(self) -> list[str]:
         return [
@@ -120,7 +124,7 @@ async def build(tts: MockTtsAdapter, *, queued: int = 5) -> Rig:
         jitter=lambda: 0.0,
     )
     speech = SpeechTurn(deps, turn_stamp=fence.stamp(turn_id=TURN_ID))
-    return Rig(speech, fence, gateway, tts)
+    return Rig(speech, fence, gateway, tts, sink)
 
 
 async def _until(predicate: object, timeout_s: float = 2.0) -> None:
@@ -154,6 +158,27 @@ async def test_audio_after_interruption_never_reaches_the_audio_source() -> None
     assert outcome.spoken_text == "Ek lambi baat jo beech mein rukegi."
     assert not track.playback_completed
     await rig.speech.close()
+
+
+async def test_the_turns_first_written_frame_records_its_worker_monotonic_time() -> None:
+    rig = await build(MockTtsAdapter(frames_per_segment=3))
+    before = time.monotonic_ns() // 1_000_000
+
+    await rig.speech.enqueue(_segment("Pehli baat.", 0))
+    await rig.speech.enqueue(_segment("Doosri baat.", 1))
+    await rig.speech.drain()
+    await rig.speech.close()
+    after = time.monotonic_ns() // 1_000_000
+
+    started = [
+        r.envelope.payload
+        for r in rig.sink.records
+        if r.envelope.event_type is EventType.PLAYBACK_STARTED
+    ]
+    assert len(started) == 2
+    # docs/11 §11 worker span end: the first TTS frame written to the AudioSource.
+    assert before <= started[0][FIRST_FRAME_AT_KEY] <= after
+    assert FIRST_FRAME_AT_KEY not in started[1]
 
 
 async def test_completed_segments_play_out_in_order_then_complete() -> None:

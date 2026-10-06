@@ -14,6 +14,7 @@ from voice_agent.domain.cost_entry import CostEntryRecord
 from voice_agent.domain.error_event import ErrorEventRecord
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.domain.turn import ConversationTurn
+from voice_agent.events_and_latency.first_audible import FirstAudibleSample
 from voice_agent.events_and_latency.latency import LatencyStats
 from voice_agent.ports.control_plane import EventRecord
 
@@ -78,6 +79,8 @@ class SessionEvidence:
     issues: tuple[str, ...] = ()
     # Raw per-turn samples (integers only) so reports can pool sessions.
     latency_samples: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    # Structured speech-end -> first-audible samples, including worker-only ones.
+    first_audible_samples: tuple[FirstAudibleSample, ...] = ()
 
     @property
     def coherent(self) -> bool:

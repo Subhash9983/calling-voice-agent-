@@ -35,6 +35,7 @@ interface KnownOutcome {
   readonly status: SessionStatus;
   readonly disconnectReason: DisconnectReason | null;
 }
+import { LatencySampleTracker, type LatencySample } from "./latencySamples";
 import { PlaybackAckTracker } from "./playbackAcks";
 import {
   INITIAL_SESSION_STATE,
@@ -50,6 +51,7 @@ export interface TransportPort {
   setMicMuted(muted: boolean): Promise<void>;
   startAudio(): Promise<void>;
   sendClientEvent(input: ClientEventInput): Promise<ClientEventOutcome>;
+  getAgentAudioStats(): Promise<RTCStatsReport | undefined>;
   disconnect(): Promise<void>;
 }
 
@@ -109,6 +111,7 @@ export class VoiceSessionController {
   private signalTimer: ReturnType<typeof setTimeout> | null = null;
   private signalLost = false;
   private readonly acks: PlaybackAckTracker;
+  private readonly latency: LatencySampleTracker;
 
   public constructor(private readonly deps: ControllerDeps) {
     this.acks = new PlaybackAckTracker(
@@ -116,6 +119,12 @@ export class VoiceSessionController {
         void this.emit(eventType, playbackPayload(identity, positionMs));
       },
       deps.nowMs ?? ((): number => performance.now()),
+    );
+    this.latency = new LatencySampleTracker(
+      () => this.transport?.getAgentAudioStats() ?? Promise.resolve(undefined),
+      (turnId, sample) => {
+        this.emitLatencySample(turnId, sample);
+      },
     );
   }
 
@@ -293,6 +302,7 @@ export class VoiceSessionController {
   private async abort(error: SessionError): Promise<void> {
     this.stopSignalWatch();
     this.acks.dispose();
+    this.latency.dispose();
     this.releaseMicrophone();
     await this.transport?.disconnect().catch(() => undefined);
     if (this.sessionId !== null) {
@@ -322,6 +332,7 @@ export class VoiceSessionController {
     }
     this.stopSignalWatch();
     this.acks.dispose();
+    this.latency.dispose();
     this.releaseMicrophone();
     await this.transport?.disconnect().catch(() => undefined);
     await this.loadDiagnostics(sessionId, { status, disconnectReason: summary.disconnectReason });
@@ -356,6 +367,7 @@ export class VoiceSessionController {
     this.stopping = true;
     this.stopSignalWatch();
     this.acks.dispose();
+    this.latency.dispose();
     // Privacy: turn the microphone off first, never after network round trips.
     this.releaseMicrophone();
     this.dispatch({ type: "phase", phase: "ending" });
@@ -416,6 +428,7 @@ export class VoiceSessionController {
   private async emit(
     eventType: ClientEventType,
     payload?: ClientEventInput["payload"],
+    turnId?: string,
   ): Promise<void> {
     if (this.transport === null || this.sessionId === null) {
       return;
@@ -425,8 +438,18 @@ export class VoiceSessionController {
       sessionId: this.sessionId,
       eventId: this.deps.newId(),
       occurredAt: this.deps.nowIso(),
+      ...(turnId === undefined ? {} : { turnId }),
       ...(payload === undefined ? {} : { payload }),
     });
+  }
+
+  /** `client.latency_sample`: the composed browser playout span plus RTT/2 (docs/06 §15). */
+  private emitLatencySample(turnId: string, sample: LatencySample): void {
+    const payload: Readonly<Record<string, number>> =
+      sample.networkOneWayMs === null
+        ? { browser_playout_ms: sample.browserPlayoutMs }
+        : { browser_playout_ms: sample.browserPlayoutMs, network_one_way_ms: sample.networkOneWayMs };
+    void this.emit("client.latency_sample", payload, turnId);
   }
 
   /** Any metrics, state or agent audio counts as proof the agent is alive. */
@@ -532,6 +555,9 @@ export class VoiceSessionController {
         this.dispatch({ type: "message", message });
         if (message.topic === "va.playback.v1") {
           this.acks.onPlayback(message.state, message.identity);
+          if (message.state === "started") {
+            this.latency.onPlaybackStarted(message.envelope.turnId);
+          }
         }
       },
       onRejected: () => {

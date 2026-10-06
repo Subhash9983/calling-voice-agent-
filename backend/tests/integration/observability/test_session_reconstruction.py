@@ -37,6 +37,7 @@ from voice_agent.contracts.enums import (
     TurnStatus,
 )
 from voice_agent.contracts.events import EventEnvelope, EventSeverity, EventType
+from voice_agent.contracts.transport import ClientLatencySample
 from voice_agent.costing.calculator import CostCalculator
 from voice_agent.costing.rate_card import PHASE0_RATE_CARD_ID, rate_card_by_id
 from voice_agent.domain.control_session import SessionRecord
@@ -44,6 +45,7 @@ from voice_agent.domain.cost_entry import CostScope
 from voice_agent.domain.operation import ProviderOperation
 from voice_agent.events_and_latency.clock import SystemClock
 from voice_agent.events_and_latency.evidence_types import SessionEvidence, SessionEvidenceInput
+from voice_agent.events_and_latency.first_audible import FirstAudibleMethod
 from voice_agent.events_and_latency.latency import (
     COMPLETE_TURN,
     FIRST_AUDIBLE_RESPONSE,
@@ -77,11 +79,24 @@ async def _scripted_session() -> Rig:
         transport_provider="livekit",
     )
     await rig.start()
-    for _ in TRANSCRIPTS:
+    for index, _ in enumerate(TRANSCRIPTS):
         await rig.utterance()
         await rig.idle()
+        await _browser_latency_sample(rig, index)
     await rig.stop()
     return rig
+
+
+async def _browser_latency_sample(rig: Rig, index: int) -> None:
+    """The browser's per-turn playout span; turn 1 reports no RTT (fallback estimate)."""
+    latest = max(await rig.all_turns(), key=lambda turn: turn.sequence_number)
+    network = None if index == 0 else 20
+    rig.transport.client(
+        ClientLatencySample(
+            turn_id=latest.turn_id, browser_playout_ms=60, network_one_way_ms=network
+        )
+    )
+    await rig.until(lambda: len(rig.events.of(EventType.TRANSPORT_QUALITY_UPDATED)) == index + 1)
 
 
 def _ended_session() -> SessionRecord:
@@ -247,6 +262,12 @@ async def test_latency_usage_and_unavailable_evidence_are_explicit() -> None:
     for metric in (STT_FINALIZATION, LLM_FIRST_TOKEN, TTS_FIRST_AUDIO, FIRST_AUDIBLE_RESPONSE):
         assert evidence.latency[metric].sample_count == 3, metric
     assert evidence.latency[COMPLETE_TURN].sample_count == 3
+    # Composed docs/11 §11 samples; turn 1's missing RTT uses the flagged fallback.
+    assert [s.method for s in evidence.first_audible_samples] == [
+        FirstAudibleMethod.COMPOSED_NETWORK_ASSUMED,
+        FirstAudibleMethod.COMPOSED,
+        FirstAudibleMethod.COMPOSED,
+    ]
     usage = evidence.usage
     assert usage["stt"]["transcribed_audio_seconds"] > 0
     assert usage["conversation_engine"]["output_tokens"] > 0

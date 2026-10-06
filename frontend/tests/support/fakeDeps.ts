@@ -47,6 +47,7 @@ export function fakeDeps(mic?: MicrophoneResult): FakeDeps {
     setMicMuted: vi.fn().mockResolvedValue(undefined),
     startAudio: vi.fn().mockResolvedValue(undefined),
     sendClientEvent: vi.fn().mockResolvedValue("allow"),
+    getAgentAudioStats: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
   };
   const api: ControlApiClient = {
