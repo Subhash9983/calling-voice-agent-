@@ -2177,3 +2177,35 @@ The WP2 QA gate found `docs/15` conflicting with Decision 016 on the normalized 
 
 Detailed design: `docs/05-agent-worker-orchestration.md` §16, `docs/15-phase0-pricing-and-cost-model.md`. Evidence: `outputs/evidence/wp02-contracts-mock/`.
 
+### Decision 070: limited-sharing remote deployment exception (2026-10-07)
+
+The user has decided, as project owner, to deploy the Phase 0 application to a remote host (Render) and
+share the URL directly with one or two named testers, with no application login screen. This is a narrow,
+explicit exception to the standing rule at line 666 ("one local/trusted R&D user; no public deployment or
+application login") and line 1330 ("prohibit public deployment until authentication is separately
+approved"). It does not change those rules for any broader or indefinite use; it authorizes exactly this
+limited-sharing arrangement.
+
+Conditions attached to this exception:
+
+- the URL is treated as equivalent to a shared credential: the user is responsible for only giving it to the
+  one or two intended testers, and must assume anyone who obtains the URL (including through accidental
+  forwarding) can use the deployed application without further verification;
+- a hard daily spend cap of **INR 200.00**, shared across all usage, is enforced in the application itself
+  (new session creation is refused once the day's recorded cost crosses the cap, with a safe, non-alarming
+  message to the user) — this is a new safety control introduced specifically for this exception, not part of
+  the original Phase 0 local-use design;
+- the control API's existing loopback-only bind guard is relaxed only through an explicit, separate
+  deployment configuration flag (never by removing or silently bypassing the guard's default behavior for
+  local/dev use);
+- no application-level authentication, accounts, or session ownership model is introduced by this decision;
+  this exception is about reachability (a remote host instead of 127.0.0.1) and a spend cap, not about
+  identity or access control;
+- this exception does not change the R&D data/retention/credential boundaries already approved elsewhere in
+  this document (sections on MongoDB Atlas, secrets, and production-review requirements remain as written);
+- revisiting this decision (narrowing it, extending it, or replacing it with real authentication) requires a
+  fresh explicit decision from the user, the same as this one.
+
+Detailed design: deployment configuration and the daily spend cap are implemented as part of a dedicated
+deployment task; see `outputs/evidence/` for its evidence once complete.
+

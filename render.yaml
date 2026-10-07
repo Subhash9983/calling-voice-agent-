@@ -1,0 +1,78 @@
+# Render Blueprint: Phase 0 voice agent backend, limited-sharing deployment (Decision 070).
+# The frontend static site is deployed separately and must set its API base URL to this
+# backend web service's https://<name>.onrender.com URL.
+# `sync: false` values are entered in the Render dashboard; no secret value is committed here.
+# plan is a user decision: background workers are not available on Render's free tier, and
+# Render hosting fees are NOT counted by the application's INR 200.00/day provider spend cap.
+services:
+  - type: web
+    name: voice-agent-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    autoDeploy: false
+    buildCommand: pip install uv==0.12.18 && uv sync --locked --no-dev
+    startCommand: .venv/bin/python -m voice_agent.control_api --persistence mongodb
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.14"
+      - key: UV_PYTHON_PREFERENCE
+        value: only-system
+      - key: PORT
+        value: "10000"
+      - key: APP_API_PORT
+        value: "10000"
+      - key: APP_DEPLOYMENT_MODE
+        value: remote_limited_sharing
+      - key: APP_API_HOST
+        value: "0.0.0.0"
+      - key: APP_PUBLIC_ORIGIN
+        sync: false
+      - key: APP_API_PUBLIC_HOST
+        sync: false
+      - key: APP_DAILY_SPEND_CAP_INR
+        value: "200.00"
+      - key: APP_DEFAULT_AGENT_CONFIG_ID
+        value: 00000000-0000-4000-8000-00000000c9a1
+      - key: APP_AGENT_NAME
+        value: phase0-voice-agent
+      - key: MONGODB_URI
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+
+  - type: worker
+    name: voice-agent-worker
+    runtime: python
+    rootDir: backend
+    plan: starter
+    autoDeploy: false
+    buildCommand: pip install uv==0.12.18 && uv sync --locked --no-dev
+    startCommand: .venv/bin/python -m voice_agent.agent_worker --media-mode conversation
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.14"
+      - key: UV_PYTHON_PREFERENCE
+        value: only-system
+      - key: APP_DEFAULT_AGENT_CONFIG_ID
+        value: 00000000-0000-4000-8000-00000000c9a1
+      - key: APP_AGENT_NAME
+        value: phase0-voice-agent
+      - key: MONGODB_URI
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false

@@ -35,6 +35,7 @@ from voice_agent.control_api.services.common import (
     transport_unavailable,
     try_replace,
 )
+from voice_agent.control_api.services.spend_cap import ensure_daily_budget
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import (
     ComponentSnapshot,
@@ -221,6 +222,8 @@ async def create_session(
     )
     if existing is not None:
         return await _replay(runtime, existing, _fingerprint(request), request_id)
+    # Decision 070: no-op in local mode; a replay above never starts new spend.
+    await ensure_daily_budget(runtime)
     config = await runtime.bounded(catalog.get_active(request.agent_config_id))
     if config is None or config.environment.value != settings.app_env.value:
         raise validation_failed(CONFIG_FIELD, CONFIG_NOT_AVAILABLE)

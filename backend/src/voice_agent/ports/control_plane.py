@@ -188,6 +188,17 @@ class CostReader(Protocol):
         ...
 
 
+@runtime_checkable
+class DailySpendReader(Protocol):
+    """Cross-session ``cost_entries`` read for the Decision 070 daily spend cap."""
+
+    async def operation_entries_since(
+        self, since: datetime, *, limit: int
+    ) -> Sequence[CostEntryRecord]:
+        """Operation-scope lines calculated at/after ``since`` (any session), at most ``limit``."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class ErrorCursor:
     occurred_at: datetime

@@ -10,6 +10,13 @@ Two layers prevent accidental public exposure:
 
 Phase 0 has no login; a later trusted-network binding needs a separate
 authentication decision rather than a configuration change.
+
+Decision 070 (limited-sharing remote deployment) is the single, explicit
+exception: only when ``APP_DEPLOYMENT_MODE=remote_limited_sharing`` does
+``ensure_approved_bind`` accept ``0.0.0.0``, and ``remote_access_policy``
+replace the loopback-peer check (the peer is the hosting proxy) with an exact
+check of the backend's own public ``Host`` and the one approved HTTPS
+``Origin``. The local default is unchanged.
 """
 
 from __future__ import annotations
@@ -23,7 +30,13 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from voice_agent.control_api.errors import ApiError, ErrorCode
 from voice_agent.control_api.middleware import send_error
 from voice_agent.control_api.request_context import current_request_id
-from voice_agent.security.settings import APPROVED_API_HOST, APPROVED_PUBLIC_ORIGINS, MAX_PORT
+from voice_agent.security.settings import (
+    APPROVED_API_HOST,
+    APPROVED_PUBLIC_ORIGINS,
+    MAX_PORT,
+    REMOTE_BIND_HOST,
+    DeploymentMode,
+)
 
 LOOPBACK_BIND_HOST: Final = APPROVED_API_HOST
 DEFAULT_API_PORT: Final = 8000
@@ -33,17 +46,30 @@ class AccessGuardError(RuntimeError):
     """Startup refused: the requested binding is outside the Phase 0 boundary."""
 
 
+def _ensure_port(port: int) -> None:
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= MAX_PORT:
+        raise AccessGuardError("the control API needs an explicit valid port")
+
+
 def ensure_loopback_bind(host: str, port: int) -> None:
     if host != LOOPBACK_BIND_HOST or not ipaddress.ip_address(host).is_loopback:
         raise AccessGuardError("the control API binds to 127.0.0.1 only in Phase 0")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= MAX_PORT:
-        raise AccessGuardError("the control API needs an explicit valid port")
+    _ensure_port(port)
+
+
+def ensure_approved_bind(host: str, port: int, mode: DeploymentMode) -> None:
+    """Loopback only, except ``0.0.0.0`` in explicit remote mode (Decision 070)."""
+    if mode is DeploymentMode.REMOTE_LIMITED_SHARING and host == REMOTE_BIND_HOST:
+        _ensure_port(port)
+        return
+    ensure_loopback_bind(host, port)
 
 
 @dataclass(frozen=True, slots=True)
 class AccessPolicy:
     allowed_hosts: frozenset[str]
     allowed_origins: frozenset[str]
+    require_loopback_peer: bool = True
 
 
 def access_policy(port: int, public_origin: str | None) -> AccessPolicy:
@@ -53,6 +79,19 @@ def access_policy(port: int, public_origin: str | None) -> AccessPolicy:
     return AccessPolicy(
         allowed_hosts=frozenset({LOOPBACK_BIND_HOST, f"{LOOPBACK_BIND_HOST}:{port}"}),
         allowed_origins=frozenset(origins),
+    )
+
+
+def remote_access_policy(public_host: str, public_origin: str) -> AccessPolicy:
+    """Decision 070: exact public ``Host`` and one HTTPS ``Origin``; no peer check.
+
+    Both values were validated by the settings (lowercase DNS host, exact
+    ``https://`` origin, no wildcard). The local origin is *not* added.
+    """
+    return AccessPolicy(
+        allowed_hosts=frozenset({public_host}),
+        allowed_origins=frozenset({public_origin}),
+        require_loopback_peer=False,
     )
 
 
@@ -71,7 +110,7 @@ def _header_values(scope: Scope, name: bytes) -> list[str]:
 
 
 def is_request_allowed(scope: Scope, policy: AccessPolicy) -> bool:
-    if not _is_loopback_peer(scope):
+    if policy.require_loopback_peer and not _is_loopback_peer(scope):
         return False
     hosts = _header_values(scope, b"host")
     if len(hosts) != 1 or hosts[0] not in policy.allowed_hosts:

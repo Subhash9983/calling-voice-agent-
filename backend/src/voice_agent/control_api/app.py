@@ -25,7 +25,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from voice_agent.control_api.access import (
     DEFAULT_API_PORT,
     AccessGuardMiddleware,
+    AccessPolicy,
     access_policy,
+    remote_access_policy,
 )
 from voice_agent.control_api.error_handlers import install_exception_handlers
 from voice_agent.control_api.middleware import RequestContextMiddleware
@@ -62,7 +64,7 @@ from voice_agent.control_api.structured_logging import get_logger, log_event
 from voice_agent.provider_registry.catalog import builtin_agent_config_documents
 from voice_agent.provider_registry.startup_check import run_startup_check
 from voice_agent.security.readiness import PersistenceMode, ProcessRole
-from voice_agent.security.settings import AppEnvironment
+from voice_agent.security.settings import AppEnvironment, BootstrapSettings
 
 API_TITLE = "Voice agent control API"
 API_VERSION = "0.6.0"
@@ -158,9 +160,13 @@ def create_app(
         outcome, documents=documents, persistence=persistence, overrides=options
     )
     settings = runtime.settings
-    port = settings.app_api_port if settings is not None else DEFAULT_API_PORT
     origin = settings.app_public_origin if settings is not None else None
-    local_docs = settings is not None and settings.app_env is AppEnvironment.DEVELOPMENT
+    # Interactive API docs are local-development only, never on a remote host.
+    local_docs = (
+        settings is not None
+        and settings.app_env is AppEnvironment.DEVELOPMENT
+        and not settings.is_remote_limited_sharing
+    )
     app = FastAPI(
         title=API_TITLE,
         version=API_VERSION,
@@ -182,6 +188,16 @@ def create_app(
         expose_headers=["x-request-id"],
         max_age=600,
     )
-    app.add_middleware(AccessGuardMiddleware, policy=access_policy(port, origin))
+    app.add_middleware(AccessGuardMiddleware, policy=_access_policy(settings))
     app.add_middleware(RequestContextMiddleware)
     return app
+
+
+def _access_policy(settings: BootstrapSettings | None) -> AccessPolicy:
+    """Loopback policy by default; the Decision 070 remote policy only when explicit."""
+    if settings is None:
+        return access_policy(DEFAULT_API_PORT, None)
+    public_host = settings.app_api_public_host
+    if settings.is_remote_limited_sharing and public_host is not None:
+        return remote_access_policy(public_host, settings.app_public_origin)
+    return access_policy(settings.app_api_port, settings.app_public_origin)

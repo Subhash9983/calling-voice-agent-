@@ -53,6 +53,7 @@ from voice_agent.ports.clock import Clock, IdGenerator
 from voice_agent.ports.control_plane import (
     AgentConfigCatalog,
     CostReader,
+    DailySpendReader,
     ErrorReader,
     FeedbackRepository,
     SessionEventLog,
@@ -101,6 +102,8 @@ class ControlPlaneStores:
     costs: CostReader | None = None
     # ``error_events`` reads (WP11); absent -> the error diagnostic stays not-ready.
     errors: ErrorReader | None = None
+    # Decision 070 daily spend cap read; absent in remote mode -> creation refused.
+    spend: DailySpendReader | None = None
 
 
 def in_memory_stores() -> ControlPlaneStores:
@@ -121,6 +124,7 @@ def mongo_stores(persistence: MongoPersistence, settings: BootstrapSettings) -> 
         environment=AgentConfigEnvironment(settings.app_env.value),
         service_version=SERVICE_VERSION,
     )
+    costs = MongoCostEntryStore(persistence)
     return ControlPlaneStores(
         sessions=stores.sessions,
         feedback=stores.feedback,
@@ -129,8 +133,9 @@ def mongo_stores(persistence: MongoPersistence, settings: BootstrapSettings) -> 
         reconciliation=MongoSessionReconciliationRepository(persistence),
         leases=MongoWorkerLeaseRepository(persistence),
         recovery=MongoWorkerRecoveryRepository(persistence),
-        costs=MongoCostEntryStore(persistence),
+        costs=costs,
         errors=MongoErrorEventStore(persistence),
+        spend=costs,
     )
 
 

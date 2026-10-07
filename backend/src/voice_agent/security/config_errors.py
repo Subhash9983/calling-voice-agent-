@@ -127,7 +127,10 @@ def diagnostics_from_validation_error(
     diagnostics: list[ConfigDiagnostic] = []
     for item in error.errors(include_input=False, include_url=False, include_context=False):
         location = item["loc"]
-        name = str(location[0]) if location else ""
+        # A provided value is located by its alias; a failing *default* (for
+        # example a setting required only in remote mode) by its field name,
+        # which is always the lowercase alias.
+        name = str(location[0]).upper() if location else ""
         label = safe_setting_label(name) if name else None
         diagnostics.append(
             ConfigDiagnostic(

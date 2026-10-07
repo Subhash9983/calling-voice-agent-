@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from voice_agent.contracts.cost import Currency, EvidenceStatus
+from voice_agent.contracts.cost import EvidenceStatus
 from voice_agent.contracts.enums import CalculationStatus, OperationComponent
 from voice_agent.contracts.events import EventSeverity, browser_safe_view
 from voice_agent.control_api.schemas.diagnostics import (
@@ -39,7 +39,7 @@ from voice_agent.control_api.schemas.sessions import (
     SessionView,
 )
 from voice_agent.costing.calculator import round_for_report
-from voice_agent.costing.rate_card import rate_card_by_id
+from voice_agent.costing.daily_spend import line_inr
 from voice_agent.costing.reconciliation import ComponentCost
 from voice_agent.domain.agent_config import AgentConfig
 from voice_agent.domain.control_session import SessionRecord
@@ -268,15 +268,10 @@ def _inr_display(lines: Sequence[CostEntryRecord]) -> str | None:
     """INR display from each line's original amount on its own dated card (Decision 069)."""
     total = Decimal(0)
     for line in lines:
-        card = rate_card_by_id(line.rate.rate_card_version)
-        fx = (
-            None
-            if card is None
-            else card.find_fx(line.currency_conversion.original_currency, Currency.INR)
-        )
-        if fx is None:
+        amount = line_inr(line)
+        if amount is None:
             return None
-        total += line.amounts.net_cost_original_currency * fx
+        total += amount
     return decimal_text(round_for_report(total))
 
 

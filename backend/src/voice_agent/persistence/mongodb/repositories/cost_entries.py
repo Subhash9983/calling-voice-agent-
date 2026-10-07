@@ -10,6 +10,7 @@ successful (``final``) session-scope run, so allocations never double count.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Final
 
@@ -135,6 +136,28 @@ class MongoCostEntryStore(MongoRepository):
                     sort=[("calculated_at", 1), ("cost_entry_id", 1)],
                     limit=bounded,
                 )
+                .to_list(length=bounded)
+            )
+        return [parse(CostEntryRecord, row) for row in rows]
+
+    async def operation_entries_since(
+        self, since: datetime, *, limit: int
+    ) -> Sequence[CostEntryRecord]:
+        """Decision 070 cap read: every session's attempt lines calculated since ``since``.
+
+        Bounded by ``limit`` (the caller asks for one extra line to detect
+        truncation and then fails closed). Phase 0 volumes are small; there is
+        no dedicated ``calculated_at`` index, so this is a bounded scan.
+        """
+        bounded = max(1, limit)
+        filters: dict[str, Any] = {
+            "scope": CostScope.OPERATION.value,
+            "calculated_at": {"$gte": since},
+        }
+        async with translate_errors():
+            rows = await (
+                self.collection(Collection.COST_ENTRIES)
+                .find(filters, limit=bounded)
                 .to_list(length=bounded)
             )
         return [parse(CostEntryRecord, row) for row in rows]

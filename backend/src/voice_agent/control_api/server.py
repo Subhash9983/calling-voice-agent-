@@ -7,6 +7,10 @@ only on invalid configuration), refuse any binding other than
 ``127.0.0.1:<port>``, then serve with uvicorn access logging disabled
 (access logs would record raw query strings). Readiness may still be false
 after startup; liveness stays independent.
+
+Decision 070: with ``APP_DEPLOYMENT_MODE=remote_limited_sharing`` the bind
+may be ``0.0.0.0`` and persistence must be ``mongodb`` (the daily spend cap
+reads recorded cost evidence); the local default path is unchanged.
 """
 
 from __future__ import annotations
@@ -19,12 +23,17 @@ from typing import Any
 
 import uvicorn
 
-from voice_agent.control_api.access import AccessGuardError, ensure_loopback_bind
+from voice_agent.control_api.access import (
+    AccessGuardError,
+    ensure_approved_bind,
+    ensure_loopback_bind,
+)
 from voice_agent.control_api.app import create_app
 from voice_agent.control_api.structured_logging import configure_logging
 from voice_agent.security.config_errors import ConfigurationError
 from voice_agent.security.config_loader import load_bootstrap_configuration
 from voice_agent.security.readiness import PersistenceMode
+from voice_agent.security.settings import BootstrapSettings
 
 Serve = Callable[..., Any]
 EXIT_OK = 0
@@ -46,6 +55,15 @@ def _refuse(payload: Mapping[str, object]) -> int:
     return EXIT_REFUSED
 
 
+def _check_bind(settings: BootstrapSettings) -> None:
+    if settings.is_remote_limited_sharing:
+        ensure_approved_bind(
+            settings.app_api_host, settings.app_api_port, settings.app_deployment_mode
+        )
+    else:
+        ensure_loopback_bind(settings.app_api_host, settings.app_api_port)
+
+
 def main(
     argv: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
@@ -59,11 +77,14 @@ def main(
         return _refuse({"diagnostics": [item.to_safe_dict() for item in exc.diagnostics]})
     settings = loaded.settings
     try:
-        ensure_loopback_bind(settings.app_api_host, settings.app_api_port)
+        _check_bind(settings)
     except AccessGuardError:
         return _refuse({"reason": "binding_not_allowed"})
+    persistence = PersistenceMode(args.persistence)
+    if settings.is_remote_limited_sharing and persistence is not PersistenceMode.MONGODB:
+        return _refuse({"reason": "persistence_not_allowed"})
     configure_logging(settings.app_log_level)
-    app = create_app(environ=environ, persistence=PersistenceMode(args.persistence))
+    app = create_app(environ=environ, persistence=persistence)
     serve(
         app,
         host=settings.app_api_host,
