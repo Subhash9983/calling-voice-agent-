@@ -16,8 +16,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.14"
-      - key: UV_PYTHON_PREFERENCE
-        value: only-system
       - key: PORT
         value: "10000"
       - key: APP_API_PORT
@@ -56,8 +54,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.14"
-      - key: UV_PYTHON_PREFERENCE
-        value: only-system
       - key: APP_DEFAULT_AGENT_CONFIG_ID
         value: 00000000-0000-4000-8000-00000000c9a1
       - key: APP_AGENT_NAME
