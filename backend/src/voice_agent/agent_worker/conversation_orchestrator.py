@@ -23,7 +23,8 @@ Manager + Deepgram, durable-before-authorized transcripts) with an
   stale audio is never resumed;
 - the deterministic greeting exactly once, after the first ``client.ready``
   of a new session (never on a duplicate ready, a reconnect, or a
-  worker-crash recovery);
+  worker-crash recovery); a user turn already open when it would start
+  keeps the floor and the greeting is skipped, never raced;
 - approved timeouts (silence -> ``idle`` state, maximum user turn, session
   idle -> ``idle_timeout`` end, the time-limit notice before the maximum
   duration); the 20 s reconnect window stays with the transport;
@@ -160,6 +161,10 @@ class ConversationOrchestrator(SttCheck):
 
     def _busy(self) -> bool:
         return self._speaking.responding or self._open is not None or bool(self._awaiting)
+
+    def _floor_free(self) -> bool:
+        """No response, open/committed user turn, or Turn Manager activity holds the floor."""
+        return not self._busy() and self._state.phase is TurnPhase.IDLE
 
     def _playback_active(self) -> bool:
         probe = self._transport if isinstance(self._transport, AgentAudioActivityProbe) else None
@@ -386,10 +391,17 @@ class ConversationOrchestrator(SttCheck):
         self._greeting_attempted = True
         if not self._greeting_enabled or self._blocked or self._paused:
             return
-        if self._busy() or self._state.phase is not TurnPhase.IDLE:
+        if not self._floor_free():
             self._count("greeting_skipped")
             return
         turn = await self._new_agent_turn("greeting")
+        if self._paused or not self._floor_free():
+            # The user's own turn opened while the greeting turn was being
+            # written: it keeps the floor, so the greeting is skipped rather
+            # than racing it (their continued speech is never a barge-in).
+            self._count("greeting_skipped")
+            await self._evidence.save_turn(turn.discard())
+            return
         self._state = TurnTakingState(phase=TurnPhase.RESPONDING)
         if await self._speaking.speak_template(turn, OPENING_GREETING):
             self._count("greetings")

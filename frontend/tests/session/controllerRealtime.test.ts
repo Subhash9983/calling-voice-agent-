@@ -250,6 +250,28 @@ describe("agent signal watchdog (5 s)", () => {
   });
 });
 
+describe("client.ready re-send on late agent join", () => {
+  it("re-sends client.ready when the agent joins after the browser (the first send was missed)", async () => {
+    const fake = fakeDeps();
+    const controller = await live(fake);
+
+    fake.handlers().onAgentPresence(true);
+
+    expect(sentTypes(fake)).toEqual(["client.ready", "client.ready"]);
+    await controller.stop();
+  });
+
+  it("does not re-send client.ready once the session is no longer live", async () => {
+    const fake = fakeDeps();
+    const controller = await live(fake);
+    await controller.stop();
+
+    fake.handlers().onAgentPresence(true);
+
+    expect(sentTypes(fake)).toEqual(["client.ready"]);
+  });
+});
+
 describe("immediate rejoin", () => {
   it("refreshes the token and rejoins as soon as the SDK reports disconnected, without waiting", async () => {
     const sleeps: number[] = [];

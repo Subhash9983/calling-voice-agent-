@@ -105,6 +105,35 @@ async def test_activity_requested_idle_end_completes_as_ended(backend: Backend) 
     assert raw["disconnect_reason"] == "idle_timeout"
 
 
+async def test_speech_activity_sessions_send_the_browser_a_liveness_heartbeat(
+    backend: Backend,
+) -> None:
+    """Regression: a quiet speech-mode session must not look like a lost agent.
+
+    The browser shows "Reconnecting agent" after 5 s without any agent
+    message; only the tone/echo check used to send ``va.metrics.v1``.
+    """
+    rig = await _rig(backend)
+
+    async def quiet(_context: ActivityContext) -> None:
+        await asyncio.Event().wait()  # listening; the user has not spoken yet
+
+    task = await _start(rig, quiet)
+
+    async def beating() -> bool:
+        return len([s for s in rig.gateway.sent if s.topic == "va.metrics.v1"]) >= 2
+
+    await _until(beating)
+    await rig.request_end()
+    result = await _result(task)
+
+    beats = [s for s in rig.gateway.sent if s.topic == "va.metrics.v1"]
+    assert all(not beat.reliable and beat.destination == BROWSER for beat in beats)
+    assert beats[0].body["event_type"] == "transport.quality_updated"
+    assert beats[0].body["payload"]["lease_valid_for_ms"] >= 0
+    assert result.outcome is RunOutcome.ENDED
+
+
 async def test_lifecycle_events_reach_the_activity_listener(backend: Backend) -> None:
     rig = await _rig(backend)
     seen: list[TransportEventKind] = []

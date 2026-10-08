@@ -33,6 +33,7 @@ from pydantic import JsonValue
 
 from voice_agent.agent_worker.admission import JobAdmission, SessionReader
 from voice_agent.agent_worker.lease_keeper import HEARTBEAT_INTERVAL_S, LeaseKeeper
+from voice_agent.agent_worker.liveness_heartbeat import browser_heartbeat
 from voice_agent.agent_worker.media_check import MediaCheck, MediaMode, MediaTiming
 from voice_agent.contracts.enums import DisconnectReason, SessionStatus
 from voice_agent.contracts.events import (
@@ -362,17 +363,16 @@ class WorkerSessionRunner:
 
     async def _media(self, transport: SessionTransportPort, keeper: LeaseKeeper) -> None:
         if self._activity is not None:
-            await self._activity(
-                ActivityContext(
-                    transport=transport,
-                    session_id=self._session_id,
-                    correlation_id=self._admission.record.correlation_id,
-                    worker_generation=keeper.token.generation,
-                    lease_hint=keeper.lease_valid_for_ms,
-                    request_end=self._request_end,
-                    add_lifecycle_listener=self._listeners.append,
-                )
+            context = ActivityContext(
+                transport=transport,
+                session_id=self._session_id,
+                correlation_id=self._admission.record.correlation_id,
+                worker_generation=keeper.token.generation,
+                lease_hint=keeper.lease_valid_for_ms,
+                request_end=self._request_end,
+                add_lifecycle_listener=self._listeners.append,
             )
+            await self._run_activity(self._activity, context)
             return
         check = MediaCheck(
             transport,
@@ -386,6 +386,26 @@ class WorkerSessionRunner:
             timing=self._media_timing,
         )
         await check.run()
+
+    async def _run_activity(self, activity: ActivityFactory, context: ActivityContext) -> None:
+        """A speech activity plus the browser liveness heartbeat the tone check has built in."""
+        heartbeat = asyncio.create_task(
+            browser_heartbeat(
+                context.transport,
+                session_id=context.session_id,
+                correlation_id=context.correlation_id,
+                clock=self._stores.clock,
+                ids=self._stores.ids,
+                lease_hint=context.lease_hint,
+                interval_s=self._media_timing.metrics_interval_s,
+            )
+        )
+        try:
+            await activity(context)
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
 
     # ------------------------------------------------------------ endings --
     async def _self_fence(self, transport: SessionTransportPort) -> RunResult:

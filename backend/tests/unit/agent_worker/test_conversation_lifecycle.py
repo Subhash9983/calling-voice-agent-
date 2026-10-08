@@ -29,6 +29,7 @@ from voice_agent.contracts.transport import (
     TransportEvent,
     TransportEventKind,
 )
+from voice_agent.domain.turn import ConversationTurn
 from voice_agent.events_and_latency.clock import SystemClock
 from voice_agent.tts_adapters.mock.adapter import MockTtsAdapter
 from voice_agent.turn_management.fallbacks import (
@@ -116,6 +117,69 @@ async def test_the_greeting_can_be_interrupted_and_never_resumes() -> None:
     assert greeting.interruption.interruption_latency_ms is not None
     assert turn.status is TurnStatus.COMPLETED
     assert sum("नमस्ते" in text for text in _texts(tts)) == 1
+
+
+async def test_client_ready_during_an_open_user_turn_skips_the_greeting() -> None:
+    tts = MockTtsAdapter(frames_per_segment=2)
+    rig = build([reply("Ji, boliye.")], ["Pehle main"], tts=tts, greeting=True)
+    await rig.start()
+
+    await rig.feed(10, SPEECH)
+    await rig.until(lambda: rig.orchestrator._open is not None)
+    rig.transport.client(ClientReady())
+    await rig.feed(15, SPEECH)
+    await rig.feed(40, SILENCE)
+    await rig.idle()
+    await rig.stop()
+
+    assert not any("नमस्ते" in text for text in _texts(tts))
+    assert rig.orchestrator.counters["greeting_skipped"] == 1
+    assert "interruptions_accepted" not in rig.orchestrator.counters
+    [turn] = await rig.all_turns()
+    assert turn.status is TurnStatus.COMPLETED
+    assert turn.final_transcript == "Pehle main"
+
+
+async def test_user_turn_opened_while_the_greeting_is_prepared_wins_over_the_greeting() -> None:
+    """Regression: ``client.ready`` racing a user who is already speaking.
+
+    The greeting's durable turn write yields; if the user's own turn opens in
+    that window, the greeting must not then claim the floor (which made the
+    user's continued speech look like a barge-in on the greeting).
+    """
+    tts = MockTtsAdapter(frames_per_segment=2)
+    rig = build([reply("Haan, boliye.")], ["Main pehle bol raha hoon"], tts=tts, greeting=True)
+    held, release = asyncio.Event(), asyncio.Event()
+    save = rig.turns.save
+
+    async def slow_greeting_save(turn: ConversationTurn) -> None:
+        if turn.input_disposition is InputDisposition.EMPTY and not held.is_set():
+            held.set()  # the greeting turn's first durable write
+            await release.wait()
+        await save(turn)
+
+    rig.turns.save = slow_greeting_save  # type: ignore[method-assign]
+    await rig.start()
+
+    rig.transport.client(ClientReady())
+    await rig.until(held.is_set)
+    await rig.feed(10, SPEECH)  # the user starts talking meanwhile: their turn opens
+    await rig.until(lambda: rig.orchestrator._open is not None)
+    release.set()
+    await rig.feed(15, SPEECH)  # ... and keeps talking within the same turn
+    await rig.feed(40, SILENCE)
+    await rig.idle()
+    await rig.stop()
+
+    assert not any("नमस्ते" in text for text in _texts(tts))
+    assert rig.orchestrator.counters["greeting_skipped"] == 1
+    assert "interruptions_accepted" not in rig.orchestrator.counters
+    assert "interruption_candidates" not in rig.orchestrator.counters
+    turns = await rig.all_turns()
+    [user] = [turn for turn in turns if turn.final_transcript is not None]
+    assert user.status is TurnStatus.COMPLETED
+    assert user.final_transcript == "Main pehle bol raha hoon"
+    assert all(turn.status is TurnStatus.DISCARDED for turn in turns if turn is not user)
 
 
 async def test_empty_transcript_after_barge_in_speaks_the_clarification_once() -> None:

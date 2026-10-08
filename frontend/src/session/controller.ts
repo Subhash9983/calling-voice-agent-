@@ -568,6 +568,12 @@ export class VoiceSessionController {
       },
       onAgentPresence: (present) => {
         this.dispatch({ type: "agent_presence", present });
+        if (present && this.state.phase === "live") {
+          // The agent joined the room after our first client.ready; that message
+          // was lost (LiveKit data only reaches participants already present), so
+          // re-send it now. Re-sends are idempotent on the worker.
+          void this.emit("client.ready");
+        }
       },
     };
   }

@@ -2209,3 +2209,12 @@ Conditions attached to this exception:
 Detailed design: deployment configuration and the daily spend cap are implemented as part of a dedicated
 deployment task; see `outputs/evidence/` for its evidence once complete.
 
+**Addendum (2026-10-08):** after deployment, the user was explicitly asked whether the residual gap
+flagged above — no session ownership means any tester with the URL can list and read every other
+tester's sessions, transcripts, and operations (though not raw secrets or other testers' spend-cap
+standing) — was acceptable for this limited-sharing arrangement, or whether a lightweight fix should be
+built. The user's explicit answer: leave it as-is, no fix. This is the same no-identity/no-access-control
+posture already stated above, now confirmed with the concrete residual risk spelled out rather than left
+implicit. Revisiting this still requires a fresh explicit decision from the user, same as the rest of
+Decision 070.
+
