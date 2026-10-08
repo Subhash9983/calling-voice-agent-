@@ -4,10 +4,15 @@
 # `sync: false` values are entered in the Render dashboard; no secret value is committed here.
 # plan is a user decision: background workers are not available on Render's free tier, and
 # Render hosting fees are NOT counted by the application's INR 200.00/day provider spend cap.
+# region is Singapore: it is the closest Render region to the Atlas Mumbai cluster, which
+# matters because every turn does several MongoDB round trips (session lease, evidence writes).
+# Render does not let an existing service change region, so this requires recreating the two
+# services (delete + redeploy from this Blueprint), not just a redeploy of the current ones.
 services:
   - type: web
     name: voice-agent-api
     runtime: python
+    region: singapore
     rootDir: backend
     plan: starter
     autoDeploy: false
@@ -46,6 +51,7 @@ services:
   - type: worker
     name: voice-agent-worker
     runtime: python
+    region: singapore
     rootDir: backend
     plan: starter
     autoDeploy: false
