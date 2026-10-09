@@ -140,6 +140,7 @@ export type EvidenceState =
       readonly conversationCost?: ConversationCostSummary | null;
       readonly tts?: TtsOperationsSummary | null;
       readonly ttsCost?: TtsCostSummary | null;
+      readonly overallCost?: OverallCostSummary | null;
       readonly outcome: SessionOutcomeSummary;
       readonly latency: readonly LatencyStageSummary[];
     };
@@ -163,6 +164,46 @@ export function summarizeOperations(operations: readonly OperationView[]): SttOp
 export function summarizeCost(breakdown: CostBreakdown): SttCostSummary {
   const stt = breakdown.components.find((component) => component.component === STT_COMPONENT);
   return { sttUsd: stt?.amountUsd ?? null, calculationStatus: breakdown.calculationStatus };
+}
+
+export interface OverallCostSummary {
+  readonly totalUsd: string;
+  readonly calculationStatus: string;
+  /** Null when the session's start/end timestamps are unavailable, or the duration is not positive. */
+  readonly costPerMinuteUsd: string | null;
+}
+
+const MS_PER_MINUTE = 60_000;
+/** The same precision as the backend's own decimal cost strings (docs/15 §9). */
+const COST_PER_MINUTE_DECIMALS = 6;
+
+function minutesBetween(createdAt: string | null, endedAt: string | null): number | null {
+  if (createdAt === null || endedAt === null) {
+    return null;
+  }
+  const startMs = Date.parse(createdAt);
+  const endMs = Date.parse(endedAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return null;
+  }
+  const minutes = (endMs - startMs) / MS_PER_MINUTE;
+  return minutes > 0 ? minutes : null;
+}
+
+/** Total session cost, plus a derived (frontend-only) cost-per-minute rate. */
+export function summarizeOverallCost(
+  breakdown: CostBreakdown | null,
+  createdAt: string | null,
+  endedAt: string | null,
+): OverallCostSummary | null {
+  if (breakdown === null) {
+    return null;
+  }
+  const minutes = minutesBetween(createdAt, endedAt);
+  const total = Number.parseFloat(breakdown.totalUsd);
+  const costPerMinuteUsd =
+    minutes === null || !Number.isFinite(total) ? null : (total / minutes).toFixed(COST_PER_MINUTE_DECIMALS);
+  return { totalUsd: breakdown.totalUsd, calculationStatus: breakdown.calculationStatus, costPerMinuteUsd };
 }
 
 function sumUsage(operations: readonly OperationView[], unit: string): number | null {

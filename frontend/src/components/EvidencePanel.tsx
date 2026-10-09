@@ -1,5 +1,11 @@
 import { Fragment, type ReactElement } from "react";
-import type { ErrorCodeCount, EvidenceState, LatencyStageSummary, SessionOutcomeSummary } from "../session/evidence";
+import type {
+  ErrorCodeCount,
+  EvidenceState,
+  LatencyStageSummary,
+  OverallCostSummary,
+  SessionOutcomeSummary,
+} from "../session/evidence";
 
 const NOT_AVAILABLE = "Not available yet";
 
@@ -58,6 +64,24 @@ function SessionOutcomeSection({ outcome }: { readonly outcome: SessionOutcomeSu
   );
 }
 
+function OverallCostSection({ cost }: { readonly cost: OverallCostSummary | null }): ReactElement {
+  return (
+    <section aria-labelledby="overall-cost-evidence-heading">
+      <h3 id="overall-cost-evidence-heading">Overall cost</h3>
+      {cost === null ? (
+        <p className="muted">Shown after the session ends.</p>
+      ) : (
+        <dl className="facts">
+          <dt>Total cost</dt>
+          <dd>{`$${cost.totalUsd} (${cost.calculationStatus})`}</dd>
+          <dt>Cost per minute</dt>
+          <dd>{cost.costPerMinuteUsd === null ? NOT_AVAILABLE : `$${cost.costPerMinuteUsd}/min`}</dd>
+        </dl>
+      )}
+    </section>
+  );
+}
+
 function LatencySummarySection({ latency }: { readonly latency: readonly LatencyStageSummary[] | null }): ReactElement {
   return (
     <section aria-labelledby="latency-evidence-heading">
@@ -92,6 +116,7 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
   const tts = evidence.status === "ready" ? (evidence.tts ?? null) : null;
   const ttsCost = evidence.status === "ready" ? (evidence.ttsCost ?? null) : null;
   const ttsUsd = ttsCost?.ttsUsd ?? null;
+  const overallCost = evidence.status === "ready" ? (evidence.overallCost ?? null) : null;
   const outcome = evidence.status === "ready" ? evidence.outcome : null;
   const latency = evidence.status === "ready" ? evidence.latency : null;
   return (
@@ -99,6 +124,7 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
       <h2 id="evidence-report-heading">Session evidence</h2>
 
       <SessionOutcomeSection outcome={outcome} />
+      <OverallCostSection cost={overallCost} />
 
       <section aria-labelledby="evidence-heading">
         <h3 id="evidence-heading">Speech recognition summary</h3>

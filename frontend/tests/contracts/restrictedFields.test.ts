@@ -143,6 +143,8 @@ describe("restricted-field absence: session summary and latency", () => {
       "agentActivityState",
       "disconnectReason",
       "latencySummary",
+      "createdAt",
+      "endedAt",
     ]);
     const completeTurn = summary.latencySummary?.completeTurn;
     expect(completeTurn === null || completeTurn === undefined).toBe(false);

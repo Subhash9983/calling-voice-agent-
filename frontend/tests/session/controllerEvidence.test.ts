@@ -80,6 +80,7 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "final" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "final" },
+      overallCost: { totalUsd: "0.01", calculationStatus: "final", costPerMinuteUsd: null },
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
     });
@@ -115,6 +116,7 @@ describe("STT evidence after the session ends", () => {
       conversationCost: null,
       tts: null,
       ttsCost: null,
+      overallCost: null,
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
     });
@@ -134,6 +136,7 @@ describe("STT evidence after the session ends", () => {
       conversationCost: null,
       tts: null,
       ttsCost: null,
+      overallCost: null,
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
     });
@@ -161,6 +164,7 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: "0.0120", calculationStatus: "final" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "final" },
+      overallCost: { totalUsd: "0.02", calculationStatus: "final", costPerMinuteUsd: null },
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
     });
@@ -180,6 +184,7 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "partial" },
       tts: null,
       ttsCost: { ttsUsd: null, calculationStatus: "partial" },
+      overallCost: { totalUsd: "0", calculationStatus: "partial", costPerMinuteUsd: null },
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
     });
@@ -206,8 +211,27 @@ describe("STT evidence after the session ends", () => {
       conversationCost: { conversationUsd: null, calculationStatus: "final" },
       tts: { count: 1, charactersSynthesized: 42, firstAudioMs: null },
       ttsCost: { ttsUsd: "0.0013", calculationStatus: "final" },
+      overallCost: { totalUsd: "0.03", calculationStatus: "final", costPerMinuteUsd: null },
       outcome: CLEAN_OUTCOME,
       latency: LATENCY_NOT_AVAILABLE,
+    });
+  });
+
+  it("derives a cost-per-minute rate from the session's own start/end timestamps", async () => {
+    const controller = await ended((fake) => {
+      vi.mocked(fake.api.getCosts).mockResolvedValue({ calculationStatus: "final", totalUsd: "0.06", components: [] });
+      vi.mocked(fake.api.getSession).mockResolvedValue({
+        sessionId: "sess-1",
+        status: "ended",
+        agentActivityState: null,
+        disconnectReason: "user_ended",
+        createdAt: "2026-10-09T04:13:34.894Z",
+        endedAt: "2026-10-09T04:16:34.894Z",
+      });
+    });
+
+    expect(controller.getState().evidence).toMatchObject({
+      overallCost: { totalUsd: "0.06", calculationStatus: "final", costPerMinuteUsd: "0.020000" },
     });
   });
 

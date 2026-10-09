@@ -26,6 +26,7 @@ import {
   summarizeLatency,
   summarizeOperations,
   summarizeOutcome,
+  summarizeOverallCost,
   summarizeTtsCost,
   summarizeTtsOperations,
 } from "./evidence";
@@ -507,6 +508,8 @@ export class VoiceSessionController {
     const costsValue = costs.status === "fulfilled" ? costs.value : null;
     const errorsValue = errors.status === "fulfilled" ? errors.value : null;
     const latencySummary = session.status === "fulfilled" ? (session.value.latencySummary ?? null) : null;
+    const createdAt = session.status === "fulfilled" ? (session.value.createdAt ?? null) : null;
+    const endedAt = session.status === "fulfilled" ? (session.value.endedAt ?? null) : null;
     this.dispatch({
       type: "evidence_loaded",
       evidence: {
@@ -520,6 +523,7 @@ export class VoiceSessionController {
         conversationCost: costsValue === null ? null : summarizeConversationCost(costsValue),
         tts: ttsOperations.status === "fulfilled" ? summarizeTtsOperations(ttsOperations.value) : null,
         ttsCost: costsValue === null ? null : summarizeTtsCost(costsValue),
+        overallCost: summarizeOverallCost(costsValue, createdAt, endedAt),
         outcome: summarizeOutcome(outcome, errorsValue),
         latency: summarizeLatency(latencySummary),
       },

@@ -63,7 +63,25 @@ describe("parseSessionSummary", () => {
       agentActivityState: null,
       disconnectReason: "user_ended",
       latencySummary: null,
+      createdAt: null,
+      endedAt: null,
     });
+  });
+
+  it("reads created_at and ended_at when the backend reports them", () => {
+    const result = parseSessionSummary({
+      data: {
+        session_id: "s1",
+        status: "ended",
+        agent_activity_state: null,
+        disconnect_reason: "user_ended",
+        created_at: "2026-10-09T04:13:34.894Z",
+        ended_at: "2026-10-09T04:15:39.068Z",
+      },
+      request_id: "r",
+    });
+    expect(result.createdAt).toBe("2026-10-09T04:13:34.894Z");
+    expect(result.endedAt).toBe("2026-10-09T04:15:39.068Z");
   });
 
   it("parses a populated latency summary", () => {

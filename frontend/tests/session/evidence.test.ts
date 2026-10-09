@@ -8,6 +8,7 @@ import {
   summarizeLatency,
   summarizeOperations,
   summarizeOutcome,
+  summarizeOverallCost,
   summarizeTtsCost,
   summarizeTtsOperations,
 } from "../../src/session/evidence";
@@ -50,6 +51,33 @@ describe("summarizeCost", () => {
 
   it("has no STT amount when the component is missing", () => {
     expect(summarizeCost({ calculationStatus: "partial", totalUsd: "0", components: [] }).sttUsd).toBeNull();
+  });
+});
+
+describe("summarizeOverallCost", () => {
+  const breakdown = { calculationStatus: "partial", totalUsd: "0.06", components: [] };
+
+  it("divides the total by the session's wall-clock minutes", () => {
+    const summary = summarizeOverallCost(
+      breakdown,
+      "2026-10-09T04:13:34.894Z",
+      "2026-10-09T04:16:34.894Z", // exactly 3 minutes later
+    );
+    expect(summary).toEqual({ totalUsd: "0.06", calculationStatus: "partial", costPerMinuteUsd: "0.020000" });
+  });
+
+  it("is null when there is no cost breakdown yet", () => {
+    expect(summarizeOverallCost(null, "2026-10-09T04:13:34.894Z", "2026-10-09T04:16:34.894Z")).toBeNull();
+  });
+
+  it("has no per-minute rate when the session timestamps are missing", () => {
+    expect(summarizeOverallCost(breakdown, null, null)?.costPerMinuteUsd).toBeNull();
+    expect(summarizeOverallCost(breakdown, "2026-10-09T04:13:34.894Z", null)?.costPerMinuteUsd).toBeNull();
+  });
+
+  it("has no per-minute rate for a zero or negative duration", () => {
+    const sameInstant = summarizeOverallCost(breakdown, "2026-10-09T04:13:34.894Z", "2026-10-09T04:13:34.894Z");
+    expect(sameInstant?.costPerMinuteUsd).toBeNull();
   });
 });
 

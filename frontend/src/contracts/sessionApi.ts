@@ -144,6 +144,9 @@ export interface SessionSummary {
   readonly disconnectReason: DisconnectReason | null;
   /** Absent/null until the worker populates it (WP11); never fabricated. */
   readonly latencySummary?: LatencySummaryView | null;
+  readonly createdAt?: string | null;
+  /** Absent/null until the session has ended. */
+  readonly endedAt?: string | null;
 }
 
 export function parseAgentConfig(raw: unknown, path = "agent_config"): AgentConfigView {
@@ -273,6 +276,8 @@ export function parseSessionSummary(raw: unknown): SessionSummary {
     ),
     disconnectReason: readOptionalOneOf(data, "disconnect_reason", "data", DISCONNECT_REASONS),
     latencySummary: parseLatencySummary(data["latency_summary"]),
+    createdAt: readOptionalString(data, "created_at", "data", 64),
+    endedAt: readOptionalString(data, "ended_at", "data", 64),
   };
 }
 
