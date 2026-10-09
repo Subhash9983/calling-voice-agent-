@@ -11,12 +11,14 @@ from tests.support.persistence_builders import (
     make_calculation,
     make_consent,
     make_cost_run,
+    make_partial_calculation,
     new_id,
     rate_card,
     run_context,
 )
 
 from voice_agent.contracts.enums import CalculationStatus
+from voice_agent.costing.cost_entries import cost_entries_from_calculation
 from voice_agent.domain.consent import (
     ConsentDecision,
     ConsentFulfilment,
@@ -84,6 +86,27 @@ async def test_versions_increase_and_latest_final_run_supplies_totals(backend: B
     assert {entry.calculation_run_id for entry in latest} == {second[0].calculation_run_id}
     assert total == sum(e.currency_conversion.converted_net_cost for e in second)
     assert total == Decimal("0.00125")
+
+
+async def test_latest_session_run_serves_a_partial_calculation(backend: Backend) -> None:
+    """The display breakdown shows a partial run; the billing charge total stays final-only."""
+    record = await backend.session()
+    store = MongoCostEntryStore(backend.persistence)
+    partial = cost_entries_from_calculation(
+        make_partial_calculation(), card=rate_card(), context=run_context(record), ids=_Ids()
+    )
+
+    await store.insert_run(partial)
+    latest = await store.latest_session_run(record.session_id)
+    final_only = await store.latest_final_run(
+        record.session_id, scope=CostScope.SESSION, target_id=record.session_id
+    )
+    charge_total = await store.session_charge_total(record.session_id)
+
+    assert {entry.calculation_run_id for entry in latest} == {partial[0].calculation_run_id}
+    assert all(entry.calculation_status is CalculationStatus.PARTIAL for entry in latest)
+    assert list(final_only) == []
+    assert charge_total is None
 
 
 async def test_cost_entries_require_a_session_and_consistent_run(backend: Backend) -> None:

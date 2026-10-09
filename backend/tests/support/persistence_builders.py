@@ -16,6 +16,8 @@ from voice_agent.contracts.cost import (
     CostLine,
     Currency,
     EvidenceStatus,
+    MissingCost,
+    MissingCostReason,
     RateCard,
     UnitRate,
 )
@@ -361,6 +363,45 @@ def make_calculation(quantity: str = "12.5") -> CostCalculation:
         reporting_currency=Currency.USD,
         lines=(line,),
         status=CalculationStatus.FINAL,
+        total=gross,
+    )
+
+
+def make_partial_calculation(quantity: str = "12.5") -> CostCalculation:
+    """A run with one priced line plus a missing unit, i.e. ``PARTIAL`` status."""
+    native = Decimal(quantity)
+    gross = native * Decimal("0.0001")
+    line = CostLine(
+        component=OperationComponent.STT,
+        provider="mock_stt",
+        model="mock-stt-1",
+        usage_unit=UsageUnit.TRANSCRIBED_AUDIO_SECONDS,
+        native_quantity=native,
+        billable_quantity=native,
+        billing_unit="second",
+        unit_rate=Decimal("0.0001"),
+        rate_unit_quantity=Decimal(1),
+        original_currency=Currency.USD,
+        gross_cost=gross,
+        reporting_currency=Currency.USD,
+        fx_rate=Decimal(1),
+        converted_cost=gross,
+        evidence_status=EvidenceStatus.PROVIDER_USAGE_BASED,
+        estimated=False,
+    )
+    missing = MissingCost(
+        component=OperationComponent.CONVERSATION_ENGINE,
+        provider="mock_llm",
+        model="mock-llm-1",
+        usage_unit=None,
+        reason=MissingCostReason.USAGE_UNAVAILABLE,
+    )
+    return CostCalculation(
+        rate_card_id="wp5_test_rate_card_v1",
+        reporting_currency=Currency.USD,
+        lines=(line,),
+        missing=(missing,),
+        status=CalculationStatus.PARTIAL,
         total=gross,
     )
 

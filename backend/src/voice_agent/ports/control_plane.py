@@ -174,7 +174,7 @@ class CostReader(Protocol):
     """Read side of ``cost_entries`` for the control API (docs/04 §12, §14)."""
 
     async def latest_session_run(self, session_id: str) -> Sequence[CostEntryRecord]:
-        """Lines of the latest successful (``final``) session-scope run; empty if none."""
+        """Lines of the latest session-scope run, final or partial; empty if none."""
         ...
 
     async def operation_costs(

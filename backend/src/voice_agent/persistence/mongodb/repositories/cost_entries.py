@@ -3,8 +3,11 @@
 A calculation run is inserted atomically in one transaction and is then
 immutable: a replay of the identical run is a no-op, a different run under
 the same ID is rejected, and ``calculation_version`` must increase within a
-session/scope target. Session totals use only ``charge`` lines of the latest
-successful (``final``) session-scope run, so allocations never double count.
+session/scope target. The billing charge total (``session_charge_total``)
+uses only ``charge`` lines of the latest successful (``final``) session-scope
+run, so allocations never double count; the display breakdown
+(``latest_session_run``) also serves the latest ``partial`` run when nothing
+final exists yet.
 """
 
 from __future__ import annotations
@@ -93,13 +96,24 @@ class MongoCostEntryStore(MongoRepository):
     async def latest_final_run(
         self, session_id: str, *, scope: CostScope, target_id: str
     ) -> Sequence[CostEntryRecord]:
-        latest = await self._latest(session_id, scope, target_id, final_only=True)
-        return [] if latest is None else await self.list_run(latest["calculation_run_id"])
+        return await self._latest_run(session_id, scope=scope, target_id=target_id, final_only=True)
 
     async def latest_session_run(self, session_id: str) -> Sequence[CostEntryRecord]:
-        return await self.latest_final_run(
-            session_id, scope=CostScope.SESSION, target_id=session_id
+        """Lines of the latest session-scope run, final or partial; empty if none.
+
+        A partial run (one priced unit missing, e.g. an LLM cache-token line)
+        still has a usable total for display (docs/04 §14); only the billing
+        charge total (`session_charge_total`) stays final-only.
+        """
+        return await self._latest_run(
+            session_id, scope=CostScope.SESSION, target_id=session_id, final_only=False
         )
+
+    async def _latest_run(
+        self, session_id: str, *, scope: CostScope, target_id: str, final_only: bool
+    ) -> Sequence[CostEntryRecord]:
+        latest = await self._latest(session_id, scope, target_id, final_only=final_only)
+        return [] if latest is None else await self.list_run(latest["calculation_run_id"])
 
     async def operation_costs(
         self, session_id: str, operation_ids: Sequence[str]
