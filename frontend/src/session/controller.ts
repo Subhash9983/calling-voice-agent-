@@ -10,7 +10,7 @@
 import { ApiError, type ControlApiClient } from "../api";
 import { watchDeviceLoss, type MicrophoneResult } from "../audio/microphone";
 import { playbackPayload, type ClientEventInput, type ClientEventType } from "../contracts/realtime";
-import { CONVERSATION_COMPONENT, STT_COMPONENT, TTS_COMPONENT } from "../contracts/diagnosticsApi";
+import { CONVERSATION_COMPONENT, STT_COMPONENT, TTS_COMPONENT, type CostBreakdown } from "../contracts/diagnosticsApi";
 import type { DisconnectReason, SessionStatus, SessionSummary, TransportJoin } from "../contracts/sessionApi";
 import type {
   ClientEventOutcome,
@@ -72,6 +72,8 @@ export interface ControllerDeps {
 /** First rejoin attempt is immediate: the worker window starts when we leave. */
 const RECOVERY_BACKOFF_MS: readonly number[] = [0, 500, 1000, 2000, 4000, 4000];
 const RETRY_DELAY_MS = 500;
+/** 1 initial + 3 retries at `RETRY_DELAY_MS`: generous against the worker's finalize sequence (a few Mongo writes, no new provider calls) without stalling the panel indefinitely. See `retryCostInBackground`. */
+const COST_FETCH_ATTEMPTS = 4;
 export const AGENT_SIGNAL_TIMEOUT_MS = 5000;
 const EVENTS_LIMIT = 30;
 const EVIDENCE_LIMIT = 100;
@@ -109,6 +111,8 @@ export class VoiceSessionController {
   private stopping = false;
   /** The user left (page hide or End) before a session id existed. */
   private startCancelled = false;
+  /** Bumped on every `start()`; lets a late-resolving background update (e.g. the cost retry) detect it has been superseded by a newer session and discard itself. */
+  private evidenceGeneration = 0;
   private signalTimer: ReturnType<typeof setTimeout> | null = null;
   private signalLost = false;
   private readonly acks: PlaybackAckTracker;
@@ -152,6 +156,7 @@ export class VoiceSessionController {
     }
     this.stopping = false;
     this.startCancelled = false;
+    this.evidenceGeneration += 1;
     this.dispatch({ type: "starting" });
     this.dispatch({ type: "mic_requesting" });
     const mic = await this.deps.acquireMicrophone();
@@ -495,8 +500,58 @@ export class VoiceSessionController {
     await Promise.all([this.loadEvents(sessionId), this.loadEvidence(sessionId, outcome)]);
   }
 
+  /**
+   * The worker records a session's cost calculation asynchronously, shortly
+   * after (not before) the control API accepts `end` — a separate process
+   * running its own finalize sequence. Retrying here, instead of in
+   * `loadEvidence` itself, keeps that unpredictable wait off the
+   * `stop()` -> phase:"ended" critical path: the rest of the evidence panel
+   * (operations, latency, outcome) renders immediately, and a late cost
+   * figure patches in via `evidence_cost_loaded` once it resolves. A
+   * non-retryable failure (cost genuinely unavailable) makes no further
+   * attempt.
+   */
+  private async retryCostInBackground(
+    sessionId: string,
+    generation: number,
+    firstError: unknown,
+    createdAt: string | null,
+    endedAt: string | null,
+  ): Promise<void> {
+    if (!(firstError instanceof ApiError) || !firstError.retryable) {
+      return;
+    }
+    for (let attempt = 2; attempt <= COST_FETCH_ATTEMPTS; attempt += 1) {
+      if (this.evidenceGeneration !== generation) {
+        return; // Superseded before the next attempt; stop spending calls on it.
+      }
+      await this.deps.sleep(RETRY_DELAY_MS);
+      let costs: CostBreakdown;
+      try {
+        costs = await this.deps.api.getCosts(sessionId);
+      } catch (error: unknown) {
+        if (!(error instanceof ApiError) || !error.retryable) {
+          return;
+        }
+        continue;
+      }
+      if (this.evidenceGeneration !== generation) {
+        return; // A newer session has started; never backdate its evidence.
+      }
+      this.dispatch({
+        type: "evidence_cost_loaded",
+        cost: summarizeCost(costs),
+        conversationCost: summarizeConversationCost(costs),
+        ttsCost: summarizeTtsCost(costs),
+        overallCost: summarizeOverallCost(costs, createdAt, endedAt),
+      });
+      return;
+    }
+  }
+
   /** Best-effort: any failure (including a 503 not-ready) is a neutral "not available". */
   private async loadEvidence(sessionId: string, outcome: KnownOutcome): Promise<void> {
+    const generation = this.evidenceGeneration;
     const [operations, conversationOperations, ttsOperations, costs, errors, session] = await Promise.allSettled([
       this.deps.api.listOperations(sessionId, { component: STT_COMPONENT, limit: EVIDENCE_LIMIT }),
       this.deps.api.listOperations(sessionId, { component: CONVERSATION_COMPONENT, limit: EVIDENCE_LIMIT }),
@@ -510,6 +565,9 @@ export class VoiceSessionController {
     const latencySummary = session.status === "fulfilled" ? (session.value.latencySummary ?? null) : null;
     const createdAt = session.status === "fulfilled" ? (session.value.createdAt ?? null) : null;
     const endedAt = session.status === "fulfilled" ? (session.value.endedAt ?? null) : null;
+    if (costs.status === "rejected") {
+      void this.retryCostInBackground(sessionId, generation, costs.reason, createdAt, endedAt);
+    }
     this.dispatch({
       type: "evidence_loaded",
       evidence: {

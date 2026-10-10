@@ -8,7 +8,14 @@ import type { ConstraintReport } from "../audio/microphone";
 import type { InboundMessage } from "../contracts/realtime";
 import type { AgentActivityState, ConfigurationLabels, SessionEventItem } from "../contracts/sessionApi";
 import type { LinkQuality, TransportState } from "../livekit/transport";
-import { NO_EVIDENCE, type EvidenceState } from "./evidence";
+import {
+  NO_EVIDENCE,
+  type ConversationCostSummary,
+  type EvidenceState,
+  type OverallCostSummary,
+  type SttCostSummary,
+  type TtsCostSummary,
+} from "./evidence";
 import { applyTranscriptLine, dropProvisionalLine, type TranscriptLine } from "./transcript";
 
 export type { TranscriptLine };
@@ -119,6 +126,14 @@ export type SessionAction =
   | { readonly type: "message_rejected" }
   | { readonly type: "events_loaded"; readonly events: readonly SessionEventItem[] }
   | { readonly type: "evidence_loaded"; readonly evidence: EvidenceState }
+  | {
+      /** A cost figure that resolved after `evidence_loaded` already rendered (docs/04 §14: the worker's cost write trails session end). Patches cost fields only; ignored once a newer session has replaced this evidence. */
+      readonly type: "evidence_cost_loaded";
+      readonly cost: SttCostSummary | null;
+      readonly conversationCost: ConversationCostSummary | null;
+      readonly ttsCost: TtsCostSummary | null;
+      readonly overallCost: OverallCostSummary | null;
+    }
   | { readonly type: "failed"; readonly error: SessionError }
   | { readonly type: "reset" };
 
@@ -254,6 +269,19 @@ export function sessionReducer(state: SessionViewState, action: SessionAction): 
       return { ...state, events: action.events };
     case "evidence_loaded":
       return { ...state, evidence: action.evidence };
+    case "evidence_cost_loaded":
+      return state.evidence.status !== "ready"
+        ? state
+        : {
+            ...state,
+            evidence: {
+              ...state.evidence,
+              cost: action.cost,
+              conversationCost: action.conversationCost,
+              ttsCost: action.ttsCost,
+              overallCost: action.overallCost,
+            },
+          };
     case "failed":
       return { ...state, phase: "failed", error: action.error };
     case "reset":
