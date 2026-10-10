@@ -275,6 +275,23 @@ def _inr_display(lines: Sequence[CostEntryRecord]) -> str | None:
     return decimal_text(round_for_report(total))
 
 
+def _inr_display_by_component(lines: Sequence[CostEntryRecord]) -> dict[tuple[str, str], str | None]:
+    """Per-(component, provider) INR display; unknown for a group if any of its lines is unconvertible."""
+    totals: dict[tuple[str, str], Decimal] = {}
+    unknown: set[tuple[str, str]] = set()
+    for line in lines:
+        key = (line.component.value, line.provider_identity.provider)
+        amount = line_inr(line)
+        if amount is None:
+            unknown.add(key)
+            continue
+        totals[key] = totals.get(key, Decimal(0)) + amount
+    return {
+        key: None if key in unknown else decimal_text(round_for_report(totals[key]))
+        for key in {*totals, *unknown}
+    }
+
+
 def cost_breakdown(
     lines: Sequence[CostEntryRecord], components: Sequence[ComponentCost] = ()
 ) -> CostBreakdownView:
@@ -289,6 +306,7 @@ def cost_breakdown(
         key = (line.component.value, line.provider_identity.provider)
         groups[key] = groups.get(key, Decimal(0)) + line.currency_conversion.converted_net_cost
     retried = {(c.component, c.provider): c.retry_or_failure_usd for c in components}
+    inr_by_component = _inr_display_by_component(charges)
     first = lines[0]
     estimated = any(line.evidence_status is EvidenceStatus.ESTIMATED for line in charges)
     return CostBreakdownView(
@@ -304,6 +322,7 @@ def cost_breakdown(
                 component=OperationComponent(component),
                 label=display_label(component, provider),
                 amount_usd=decimal_text(amount),
+                amount_inr_display=inr_by_component.get((component, provider)),
                 retry_or_failure_related=retried.get((component, provider), Decimal(0)) > 0,
                 retry_or_failure_usd=decimal_text(retried.get((component, provider), Decimal(0))),
             )

@@ -27,6 +27,8 @@ export interface SttOperationsSummary {
 export interface SttCostSummary {
   /** Null when the calculation has no STT component row. */
   readonly sttUsd: string | null;
+  /** Display-only INR conversion (Decision 069); null when unavailable, never derived client-side. */
+  readonly sttInrDisplay: string | null;
   readonly calculationStatus: string;
 }
 
@@ -40,6 +42,8 @@ export interface ConversationOperationsSummary {
 export interface ConversationCostSummary {
   /** Null when the calculation has no conversation-engine component row. */
   readonly conversationUsd: string | null;
+  /** Display-only INR conversion (Decision 069); null when unavailable, never derived client-side. */
+  readonly conversationInrDisplay: string | null;
   readonly calculationStatus: string;
 }
 
@@ -54,6 +58,8 @@ export interface TtsOperationsSummary {
 export interface TtsCostSummary {
   /** Null when the calculation has no TTS component row. */
   readonly ttsUsd: string | null;
+  /** Display-only INR conversion (Decision 069); null when unavailable, never derived client-side. */
+  readonly ttsInrDisplay: string | null;
   readonly calculationStatus: string;
 }
 
@@ -163,14 +169,22 @@ export function summarizeOperations(operations: readonly OperationView[]): SttOp
 
 export function summarizeCost(breakdown: CostBreakdown): SttCostSummary {
   const stt = breakdown.components.find((component) => component.component === STT_COMPONENT);
-  return { sttUsd: stt?.amountUsd ?? null, calculationStatus: breakdown.calculationStatus };
+  return {
+    sttUsd: stt?.amountUsd ?? null,
+    sttInrDisplay: stt?.amountInrDisplay ?? null,
+    calculationStatus: breakdown.calculationStatus,
+  };
 }
 
 export interface OverallCostSummary {
   readonly totalUsd: string;
+  /** Display-only INR conversion of `totalUsd` (Decision 069); null when unavailable. */
+  readonly totalInrDisplay: string | null;
   readonly calculationStatus: string;
   /** Null when the session's start/end timestamps are unavailable, or the duration is not positive. */
   readonly costPerMinuteUsd: string | null;
+  /** Null under the same conditions as `costPerMinuteUsd`, or when `totalInrDisplay` itself is unavailable. */
+  readonly costPerMinuteInrDisplay: string | null;
 }
 
 const MS_PER_MINUTE = 60_000;
@@ -190,7 +204,15 @@ function minutesBetween(createdAt: string | null, endedAt: string | null): numbe
   return minutes > 0 ? minutes : null;
 }
 
-/** Total session cost, plus a derived (frontend-only) cost-per-minute rate. */
+function perMinute(total: string | null | undefined, minutes: number | null): string | null {
+  if (total === null || total === undefined || minutes === null) {
+    return null;
+  }
+  const parsed = Number.parseFloat(total);
+  return Number.isFinite(parsed) ? (parsed / minutes).toFixed(COST_PER_MINUTE_DECIMALS) : null;
+}
+
+/** Total session cost (USD and display INR), plus a derived (frontend-only) cost-per-minute rate for each. */
 export function summarizeOverallCost(
   breakdown: CostBreakdown | null,
   createdAt: string | null,
@@ -200,10 +222,13 @@ export function summarizeOverallCost(
     return null;
   }
   const minutes = minutesBetween(createdAt, endedAt);
-  const total = Number.parseFloat(breakdown.totalUsd);
-  const costPerMinuteUsd =
-    minutes === null || !Number.isFinite(total) ? null : (total / minutes).toFixed(COST_PER_MINUTE_DECIMALS);
-  return { totalUsd: breakdown.totalUsd, calculationStatus: breakdown.calculationStatus, costPerMinuteUsd };
+  return {
+    totalUsd: breakdown.totalUsd,
+    totalInrDisplay: breakdown.totalInrDisplay ?? null,
+    calculationStatus: breakdown.calculationStatus,
+    costPerMinuteUsd: perMinute(breakdown.totalUsd, minutes),
+    costPerMinuteInrDisplay: perMinute(breakdown.totalInrDisplay, minutes),
+  };
 }
 
 function sumUsage(operations: readonly OperationView[], unit: string): number | null {
@@ -236,7 +261,11 @@ export function summarizeConversationCost(breakdown: CostBreakdown): Conversatio
   const conversation = breakdown.components.find(
     (component) => component.component === CONVERSATION_COMPONENT,
   );
-  return { conversationUsd: conversation?.amountUsd ?? null, calculationStatus: breakdown.calculationStatus };
+  return {
+    conversationUsd: conversation?.amountUsd ?? null,
+    conversationInrDisplay: conversation?.amountInrDisplay ?? null,
+    calculationStatus: breakdown.calculationStatus,
+  };
 }
 
 /** TTS (synthesis) operations summary; "not available yet" is neutral, never an error. */
@@ -254,5 +283,9 @@ export function summarizeTtsOperations(operations: readonly OperationView[]): Tt
 
 export function summarizeTtsCost(breakdown: CostBreakdown): TtsCostSummary {
   const tts = breakdown.components.find((component) => component.component === TTS_COMPONENT);
-  return { ttsUsd: tts?.amountUsd ?? null, calculationStatus: breakdown.calculationStatus };
+  return {
+    ttsUsd: tts?.amountUsd ?? null,
+    ttsInrDisplay: tts?.amountInrDisplay ?? null,
+    calculationStatus: breakdown.calculationStatus,
+  };
 }

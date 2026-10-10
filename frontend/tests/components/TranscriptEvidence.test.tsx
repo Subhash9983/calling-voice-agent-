@@ -228,6 +228,57 @@ describe("microphone release", () => {
   });
 });
 
+describe("overall cost", () => {
+  it("is neutral before the session ends", async () => {
+    await live();
+    const panel = screen.getByRole("region", { name: "Overall cost" });
+    expect(panel.textContent).toContain("Shown after the session ends");
+  });
+
+  it("shows the total and per-minute cost in INR alongside USD after the session ends", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.getCosts).mockResolvedValue({
+      calculationStatus: "partial",
+      totalUsd: "0.06",
+      totalInrDisplay: "5.10",
+      components: [],
+    });
+    vi.mocked(fake.api.getSession).mockResolvedValue({
+      sessionId: "sess-1",
+      status: "ended",
+      agentActivityState: null,
+      disconnectReason: "user_ended",
+      createdAt: "2026-10-09T04:13:34.894Z",
+      endedAt: "2026-10-09T04:16:34.894Z", // 3 minutes later
+    });
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Overall cost" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("₹5.10 ($0.06, partial)");
+    });
+    expect(panel.textContent).toContain("₹1.700000/min ($0.020000/min)");
+  });
+
+  it("falls back to USD-only when the backend's own INR conversion is unavailable", async () => {
+    const fake = fakeDeps();
+    vi.mocked(fake.api.getCosts).mockResolvedValue({
+      calculationStatus: "final",
+      totalUsd: "0.02",
+      components: [],
+    });
+    await live(fake);
+    fireEvent.click(screen.getByRole("button", { name: /end session/i }));
+
+    const panel = screen.getByRole("region", { name: "Overall cost" });
+    await waitFor(() => {
+      expect(panel.textContent).toContain("$0.02 (final)");
+    });
+    expect(panel.textContent).not.toContain("₹");
+  });
+});
+
 describe("speech recognition summary", () => {
   it("is neutral before the session ends", async () => {
     await live();
@@ -243,7 +294,7 @@ describe("speech recognition summary", () => {
     vi.mocked(fake.api.getCosts).mockResolvedValue({
       calculationStatus: "final",
       totalUsd: "0.01",
-      components: [{ component: "stt", label: "Deepgram", amountUsd: "0.0053" }],
+      components: [{ component: "stt", label: "Deepgram", amountUsd: "0.0053", amountInrDisplay: "0.45" }],
     });
     await live(fake);
     fireEvent.click(screen.getByRole("button", { name: /end session/i }));
@@ -252,7 +303,7 @@ describe("speech recognition summary", () => {
     await waitFor(() => {
       expect(panel.textContent).toContain("12.3 s");
     });
-    expect(panel.textContent).toContain("$0.0053 (final)");
+    expect(panel.textContent).toContain("₹0.45 ($0.0053, final)");
     expect(within(panel).getByText("STT operations").nextElementSibling?.textContent).toBe("1");
   });
 

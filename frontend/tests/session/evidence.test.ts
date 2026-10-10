@@ -37,33 +37,51 @@ describe("summarizeOperations", () => {
 });
 
 describe("summarizeCost", () => {
-  it("picks the STT component amount", () => {
+  it("picks the STT component amount, in USD and display INR", () => {
     const cost = summarizeCost({
       calculationStatus: "final",
       totalUsd: "1.00",
       components: [
-        { component: "tts", label: "T", amountUsd: "0.9" },
-        { component: "stt", label: "S", amountUsd: "0.1" },
+        { component: "tts", label: "T", amountUsd: "0.9", amountInrDisplay: "76.50" },
+        { component: "stt", label: "S", amountUsd: "0.1", amountInrDisplay: "8.50" },
       ],
     });
-    expect(cost).toEqual({ sttUsd: "0.1", calculationStatus: "final" });
+    expect(cost).toEqual({ sttUsd: "0.1", sttInrDisplay: "8.50", calculationStatus: "final" });
   });
 
   it("has no STT amount when the component is missing", () => {
-    expect(summarizeCost({ calculationStatus: "partial", totalUsd: "0", components: [] }).sttUsd).toBeNull();
+    const cost = summarizeCost({ calculationStatus: "partial", totalUsd: "0", components: [] });
+    expect(cost.sttUsd).toBeNull();
+    expect(cost.sttInrDisplay).toBeNull();
+  });
+
+  it("has no STT INR when that component's own FX conversion is unavailable", () => {
+    const cost = summarizeCost({
+      calculationStatus: "final",
+      totalUsd: "0.1",
+      components: [{ component: "stt", label: "S", amountUsd: "0.1" }],
+    });
+    expect(cost.sttUsd).toBe("0.1");
+    expect(cost.sttInrDisplay).toBeNull();
   });
 });
 
 describe("summarizeOverallCost", () => {
-  const breakdown = { calculationStatus: "partial", totalUsd: "0.06", components: [] };
+  const breakdown = { calculationStatus: "partial", totalUsd: "0.06", totalInrDisplay: "5.10", components: [] };
 
-  it("divides the total by the session's wall-clock minutes", () => {
+  it("divides the USD and INR totals by the session's wall-clock minutes", () => {
     const summary = summarizeOverallCost(
       breakdown,
       "2026-10-09T04:13:34.894Z",
       "2026-10-09T04:16:34.894Z", // exactly 3 minutes later
     );
-    expect(summary).toEqual({ totalUsd: "0.06", calculationStatus: "partial", costPerMinuteUsd: "0.020000" });
+    expect(summary).toEqual({
+      totalUsd: "0.06",
+      totalInrDisplay: "5.10",
+      calculationStatus: "partial",
+      costPerMinuteUsd: "0.020000",
+      costPerMinuteInrDisplay: "1.700000",
+    });
   });
 
   it("is null when there is no cost breakdown yet", () => {
@@ -71,13 +89,24 @@ describe("summarizeOverallCost", () => {
   });
 
   it("has no per-minute rate when the session timestamps are missing", () => {
-    expect(summarizeOverallCost(breakdown, null, null)?.costPerMinuteUsd).toBeNull();
+    const summary = summarizeOverallCost(breakdown, null, null);
+    expect(summary?.costPerMinuteUsd).toBeNull();
+    expect(summary?.costPerMinuteInrDisplay).toBeNull();
     expect(summarizeOverallCost(breakdown, "2026-10-09T04:13:34.894Z", null)?.costPerMinuteUsd).toBeNull();
   });
 
   it("has no per-minute rate for a zero or negative duration", () => {
     const sameInstant = summarizeOverallCost(breakdown, "2026-10-09T04:13:34.894Z", "2026-10-09T04:13:34.894Z");
     expect(sameInstant?.costPerMinuteUsd).toBeNull();
+    expect(sameInstant?.costPerMinuteInrDisplay).toBeNull();
+  });
+
+  it("has no INR total or per-minute rate when the backend's own FX conversion is unavailable", () => {
+    const noFx = { calculationStatus: "partial", totalUsd: "0.06", components: [] };
+    const summary = summarizeOverallCost(noFx, "2026-10-09T04:13:34.894Z", "2026-10-09T04:16:34.894Z");
+    expect(summary?.totalInrDisplay).toBeNull();
+    expect(summary?.costPerMinuteInrDisplay).toBeNull();
+    expect(summary?.costPerMinuteUsd).toBe("0.020000"); // USD side is unaffected
   });
 });
 
@@ -120,16 +149,16 @@ describe("summarizeConversationOperations", () => {
 });
 
 describe("summarizeConversationCost", () => {
-  it("picks the conversation-engine component amount", () => {
+  it("picks the conversation-engine component amount, in USD and display INR", () => {
     const cost = summarizeConversationCost({
       calculationStatus: "final",
       totalUsd: "1.00",
       components: [
-        { component: "stt", label: "S", amountUsd: "0.1" },
-        { component: "conversation_engine", label: "LLM", amountUsd: "0.9" },
+        { component: "stt", label: "S", amountUsd: "0.1", amountInrDisplay: "8.50" },
+        { component: "conversation_engine", label: "LLM", amountUsd: "0.9", amountInrDisplay: "76.50" },
       ],
     });
-    expect(cost).toEqual({ conversationUsd: "0.9", calculationStatus: "final" });
+    expect(cost).toEqual({ conversationUsd: "0.9", conversationInrDisplay: "76.50", calculationStatus: "final" });
   });
 
   it("has no conversation-engine amount when the component is missing", () => {
@@ -178,16 +207,16 @@ describe("summarizeTtsOperations", () => {
 });
 
 describe("summarizeTtsCost", () => {
-  it("picks the TTS component amount", () => {
+  it("picks the TTS component amount, in USD and display INR", () => {
     const cost = summarizeTtsCost({
       calculationStatus: "final",
       totalUsd: "1.00",
       components: [
-        { component: "stt", label: "S", amountUsd: "0.1" },
-        { component: "tts", label: "T", amountUsd: "0.9" },
+        { component: "stt", label: "S", amountUsd: "0.1", amountInrDisplay: "8.50" },
+        { component: "tts", label: "T", amountUsd: "0.9", amountInrDisplay: "76.50" },
       ],
     });
-    expect(cost).toEqual({ ttsUsd: "0.9", calculationStatus: "final" });
+    expect(cost).toEqual({ ttsUsd: "0.9", ttsInrDisplay: "76.50", calculationStatus: "final" });
   });
 
   it("has no TTS amount when the component is missing", () => {

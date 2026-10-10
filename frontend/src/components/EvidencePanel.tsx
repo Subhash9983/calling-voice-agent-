@@ -25,6 +25,25 @@ function formatMs(ms: number | null): string {
   return ms === null ? NOT_AVAILABLE : `${ms.toFixed(0)} ms`;
 }
 
+/** INR first (the deployment's home currency), USD alongside for precision; USD alone if INR's own FX conversion is unavailable (never derived client-side). */
+function formatCost(usd: string | null, inrDisplay: string | null | undefined, status: string): string {
+  if (usd === null) {
+    return NOT_AVAILABLE;
+  }
+  return inrDisplay === null || inrDisplay === undefined
+    ? `$${usd} (${status})`
+    : `₹${inrDisplay} ($${usd}, ${status})`;
+}
+
+function formatCostRate(usdPerMin: string | null, inrPerMinDisplay: string | null | undefined): string {
+  if (usdPerMin === null) {
+    return NOT_AVAILABLE;
+  }
+  return inrPerMinDisplay === null || inrPerMinDisplay === undefined
+    ? `$${usdPerMin}/min`
+    : `₹${inrPerMinDisplay}/min ($${usdPerMin}/min)`;
+}
+
 /** Turns a safe snake_case enum value into a short readable label (never echoes free text). */
 function humanize(value: string): string {
   const spaced = value.replace(/_/g, " ");
@@ -73,9 +92,9 @@ function OverallCostSection({ cost }: { readonly cost: OverallCostSummary | null
       ) : (
         <dl className="facts">
           <dt>Total cost</dt>
-          <dd>{`$${cost.totalUsd} (${cost.calculationStatus})`}</dd>
+          <dd>{formatCost(cost.totalUsd, cost.totalInrDisplay, cost.calculationStatus)}</dd>
           <dt>Cost per minute</dt>
-          <dd>{cost.costPerMinuteUsd === null ? NOT_AVAILABLE : `$${cost.costPerMinuteUsd}/min`}</dd>
+          <dd>{formatCostRate(cost.costPerMinuteUsd, cost.costPerMinuteInrDisplay)}</dd>
         </dl>
       )}
     </section>
@@ -138,7 +157,7 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
             <dd>{formatSeconds(evidence.operations?.audioSeconds ?? null)}</dd>
             <dt>Estimated cost</dt>
             <dd>
-              {sttUsd === null || cost === null ? NOT_AVAILABLE : `$${sttUsd} (${cost.calculationStatus})`}
+              {sttUsd === null || cost === null ? NOT_AVAILABLE : formatCost(sttUsd, cost.sttInrDisplay, cost.calculationStatus)}
             </dd>
           </dl>
         )}
@@ -160,7 +179,7 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
             <dd>
               {conversationUsd === null || conversationCost === null
                 ? NOT_AVAILABLE
-                : `$${conversationUsd} (${conversationCost.calculationStatus})`}
+                : formatCost(conversationUsd, conversationCost.conversationInrDisplay, conversationCost.calculationStatus)}
             </dd>
           </dl>
         )}
@@ -180,7 +199,7 @@ export function EvidencePanel({ evidence }: { readonly evidence: EvidenceState }
             <dd>{formatMs(tts?.firstAudioMs ?? null)}</dd>
             <dt>Estimated cost</dt>
             <dd>
-              {ttsUsd === null || ttsCost === null ? NOT_AVAILABLE : `$${ttsUsd} (${ttsCost.calculationStatus})`}
+              {ttsUsd === null || ttsCost === null ? NOT_AVAILABLE : formatCost(ttsUsd, ttsCost.ttsInrDisplay, ttsCost.calculationStatus)}
             </dd>
           </dl>
         )}

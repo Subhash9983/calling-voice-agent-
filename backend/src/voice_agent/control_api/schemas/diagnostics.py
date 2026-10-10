@@ -165,6 +165,11 @@ class CostComponentView(ApiModel):
     component: OperationComponent
     label: str
     amount_usd: str
+    # Same display-only conversion as ``total_inr_display`` (Decision 069),
+    # scoped to this component; ``None`` when any of its lines has no dated
+    # FX rate (never fabricated as zero). No default, matching that sibling
+    # field: every caller must decide the value explicitly.
+    amount_inr_display: str | None
     retry_or_failure_related: bool
     # Part of ``amount_usd`` billed by failed/cancelled attempts or retries (WP11).
     retry_or_failure_usd: str = "0"

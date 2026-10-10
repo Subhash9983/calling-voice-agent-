@@ -217,6 +217,8 @@ async def test_session_errors_and_costs_are_served_from_stored_evidence(
     assert Decimal(breakdown["total_inr_display"]) == Decimal("0.04")
     [component] = breakdown["components"]
     assert component["retry_or_failure_related"] is True
+    # Single component here, so its own INR display equals the session total.
+    assert Decimal(component["amount_inr_display"]) == Decimal("0.04")
 
 
 async def test_no_projection_leaks_restricted_fields(

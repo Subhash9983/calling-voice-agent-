@@ -52,14 +52,20 @@ describe("restricted-field absence: costs", () => {
       data: {
         calculation_status: "final",
         total_usd: "0.01",
+        total_inr_display: "0.85",
         components: [
-          { component: "stt", label: "Deepgram", amount_usd: "0.01", ...RESTRICTED },
+          { component: "stt", label: "Deepgram", amount_usd: "0.01", amount_inr_display: "0.85", ...RESTRICTED },
         ],
         ...RESTRICTED,
       },
     });
-    expect(keysOf(breakdown as object)).toEqual(["calculationStatus", "totalUsd", "components"]);
-    expect(keysOf(breakdown.components[0] as object)).toEqual(["component", "label", "amountUsd"]);
+    expect(keysOf(breakdown as object)).toEqual(["calculationStatus", "totalUsd", "totalInrDisplay", "components"]);
+    expect(keysOf(breakdown.components[0] as object)).toEqual([
+      "component",
+      "label",
+      "amountUsd",
+      "amountInrDisplay",
+    ]);
   });
 });
 

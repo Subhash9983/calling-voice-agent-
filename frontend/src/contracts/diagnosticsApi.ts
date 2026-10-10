@@ -9,6 +9,7 @@ import {
   readArray,
   readBoolean,
   readOptionalBoolean,
+  readOptionalString,
   readRecord,
   readString,
   type JsonRecord,
@@ -49,11 +50,15 @@ export interface CostComponentView {
   readonly component: string;
   readonly label: string;
   readonly amountUsd: string;
+  /** Absent/null when this component's own FX conversion is unavailable (never fabricated). */
+  readonly amountInrDisplay?: string | null;
 }
 
 export interface CostBreakdown {
   readonly calculationStatus: string;
   readonly totalUsd: string;
+  /** Display-only INR conversion of `totalUsd` (Decision 069); absent/null when unavailable. */
+  readonly totalInrDisplay?: string | null;
   readonly components: readonly CostComponentView[];
 }
 
@@ -128,6 +133,7 @@ export function parseCostBreakdown(raw: unknown): CostBreakdown {
   return {
     calculationStatus: readString(data, "calculation_status", "data", 32),
     totalUsd: readString(data, "total_usd", "data", 32),
+    totalInrDisplay: readOptionalString(data, "total_inr_display", "data", 32),
     components: readArray(data["components"], "data.components").map((item, index) => {
       const path = `data.components[${String(index)}]`;
       const source = readRecord(item, path);
@@ -135,6 +141,7 @@ export function parseCostBreakdown(raw: unknown): CostBreakdown {
         component: readString(source, "component", path, 64),
         label: readString(source, "label", path, 128),
         amountUsd: readString(source, "amount_usd", path, 32),
+        amountInrDisplay: readOptionalString(source, "amount_inr_display", path, 32),
       };
     }),
   };
